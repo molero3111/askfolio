@@ -1,0 +1,13 @@
+.env
+telegram_offset.txt
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.log
+.DS_Store
+resources/pdfs/*.pdf

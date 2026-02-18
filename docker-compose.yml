@@ -1,0 +1,41 @@
+services:
+  emmanuelai-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: emmanuelai-app
+    container_name: emmanuelai-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - emmanuelai-db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["python", "main.py"]
+    volumes:
+      - .:/app
+    networks:
+      - emmanuelai-network
+
+  emmanuelai-db:
+    image: pgvector/pgvector:pg15
+    container_name: emmanuelai-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: emmanuelai_db
+      POSTGRES_USER: emmanuelai_user
+      POSTGRES_PASSWORD: emmanuelai_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - emmanuelai-network
+
+volumes:
+  postgres_data:
+
+networks:
+  emmanuelai-network:
+    driver: bridge
