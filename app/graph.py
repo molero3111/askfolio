@@ -1,4 +1,5 @@
 import logging
+import re
 import requests
 from typing import TypedDict, Sequence
 
@@ -9,6 +10,15 @@ from app.rag import get_relevant_context
 from app.telegram_client import get_updates, send_message
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_reasoning(text: str) -> str:
+    """Remove <think>...</think> blocks and similar reasoning so only the final answer is sent to Telegram."""
+    # Remove <think>...</think> (and unclosed <think> at end)
+    out = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    out = re.sub(r"<think>[\s\S]*", "", out, flags=re.IGNORECASE)
+    out = out.strip()
+    return out if out else "(No reply could be extracted.)"
 
 
 class AgentState(TypedDict):
@@ -73,7 +83,8 @@ def llm_reply_node(state: AgentState) -> dict:
     try:
         r = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=LLM_REQUEST_TIMEOUT)
         r.raise_for_status()
-        reply = r.json()["choices"][0]["message"]["content"].strip()
+        raw = r.json()["choices"][0]["message"]["content"].strip()
+        reply = _strip_reasoning(raw)
         logger.info("[llm_reply] LLM reply length=%s chars, sending to chat_id=%s", len(reply), chat_id)
     except Exception as e:
         reply = f"Sorry, I couldn't process that: {e!s}"

@@ -13,6 +13,8 @@ Use a Self-Ask approach:
 
 Do not state which reasoning strategy you used. Do not use jargon unnecessarily. Keep answers to the point (aim for roughly 100–200 words unless the question clearly needs more).
 
+CRITICAL: Output only the direct answer to the question. Do not include any reasoning, thinking steps, or internal deliberation (no <think> blocks, no "First I will...", no "Let me check..."). Start your response with the answer itself.
+
 Context:
 {context}
 
