@@ -4,7 +4,7 @@ from typing import TypedDict, Sequence
 
 from langgraph.graph import StateGraph, START, END
 
-from app.config import LLM_API_KEY, LLM_API_URL, LLM_MODEL, RECRUITER_PROMPT_PATH
+from app.config import LLM_API_KEY, LLM_API_URL, LLM_MODEL, LLM_REQUEST_TIMEOUT, RECRUITER_PROMPT_PATH
 from app.rag import get_relevant_context
 from app.telegram_client import get_updates, send_message
 
@@ -71,7 +71,7 @@ def llm_reply_node(state: AgentState) -> dict:
         "messages": [{"role": "user", "content": prompt_content}],
     }
     try:
-        r = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=120)
+        r = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=LLM_REQUEST_TIMEOUT)
         r.raise_for_status()
         reply = r.json()["choices"][0]["message"]["content"].strip()
         logger.info("[llm_reply] LLM reply length=%s chars, sending to chat_id=%s", len(reply), chat_id)
