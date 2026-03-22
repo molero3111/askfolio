@@ -1,7 +1,6 @@
-"""Ingest PDFs from resources/pdfs into pgvector. Run from project root."""
+"""Ingest knowledge base + GitHub JSON into pgvector with section-aware chunking."""
 import argparse
 import asyncio
-import os
 import sys
 from pathlib import Path
 
@@ -14,54 +13,101 @@ from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
 import sqlalchemy
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_postgres import PGEngine, PGVectorStore
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
     DB_CONNECTION_URL_ASYNC,
     EMBEDDING_MODEL,
-    PDF_DIR,
+    INGEST_GITHUB_JSON,
+    INGEST_KNOWLEDGE_JSON,
     PGVECTOR_COLLECTION_NAME,
     VECTOR_SIZE,
 )
+from ingest.json_to_documents import (
+    documents_from_github_projects,
+    documents_from_knowledge_base,
+    split_documents_semantically,
+)
+
+
+def _resolve_path(p: str) -> Path:
+    path = Path(p)
+    return path if path.is_absolute() else ROOT / path
+
+
+def _clear_collection_rows() -> None:
+    """Delete all rows from the vector table (keeps table/schema)."""
+    dsn = DB_CONNECTION_URL_ASYNC.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+    async def _run():
+        import asyncpg
+
+        conn = await asyncpg.connect(dsn)
+        try:
+            await conn.execute(f'DELETE FROM "{PGVECTOR_COLLECTION_NAME}"')
+        finally:
+            await conn.close()
+
+    asyncio.run(_run())
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Ingest PDFs into pgvector.")
+    parser = argparse.ArgumentParser(
+        description="Ingest knowledge base + GitHub JSON into pgvector.",
+    )
     parser.add_argument(
         "--reinstall",
         action="store_true",
-        help="Drop the collection table first, then create and ingest (clean re-ingest).",
+        help="Drop the collection table, recreate it, then ingest (full reset).",
+    )
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Do not delete existing vectors before ingest (may duplicate if you run twice). "
+        "Default: delete all rows in the collection table, then ingest fresh.",
     )
     args = parser.parse_args()
 
-    pdf_dir = Path(PDF_DIR)
-    if not pdf_dir.is_absolute():
-        pdf_dir = ROOT / pdf_dir
-    if not pdf_dir.exists():
-        print(f"PDF directory not found: {pdf_dir}")
+    kb_path = _resolve_path(INGEST_KNOWLEDGE_JSON)
+    gh_path = _resolve_path(INGEST_GITHUB_JSON)
+
+    if not kb_path.exists():
+        print(f"Knowledge base JSON not found: {kb_path}")
         sys.exit(1)
-    pdf_files = [f for f in os.listdir(pdf_dir) if f.lower().endswith(".pdf")]
-    if not pdf_files:
-        print(f"No PDFs in {pdf_dir}")
+    if not gh_path.exists():
+        print(f"GitHub projects JSON not found: {gh_path}")
         sys.exit(1)
+
     if not DB_CONNECTION_URL_ASYNC:
         print("DB_CONNECTION_URL must be set in .env")
         sys.exit(1)
+
+    print(f"Loading documents from:\n  - {kb_path}\n  - {gh_path}")
+    all_docs = []
+    all_docs.extend(documents_from_knowledge_base(kb_path))
+    all_docs.extend(documents_from_github_projects(gh_path))
+    print(f"Built {len(all_docs)} section-level documents.")
+
+    chunks = split_documents_semantically(
+        all_docs,
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+    )
+    print(f"After semantic chunking: {len(chunks)} chunks (chunk_size={CHUNK_SIZE}, overlap={CHUNK_OVERLAP}).")
+
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     engine = PGEngine.from_connection_string(url=DB_CONNECTION_URL_ASYNC)
 
     if args.reinstall:
         print(f'Dropping table "{PGVECTOR_COLLECTION_NAME}" (if exists)...')
-        # Use asyncpg directly so we don't rely on PGEngine internals
         dsn = DB_CONNECTION_URL_ASYNC.replace("postgresql+asyncpg://", "postgresql://", 1)
 
         async def _drop():
             import asyncpg
+
             conn = await asyncpg.connect(dsn)
             try:
                 await conn.execute(f'DROP TABLE IF EXISTS "{PGVECTOR_COLLECTION_NAME}"')
@@ -82,15 +128,14 @@ def main():
             print(f'Table "{PGVECTOR_COLLECTION_NAME}" already exists, skipping create.')
         else:
             raise
-    all_docs = []
-    for f in pdf_files:
-        loader = PyPDFLoader(str(pdf_dir / f))
-        all_docs.extend(loader.load())
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
-    )
-    chunks = splitter.split_documents(all_docs)
+
+    if not args.append:
+        print(f'Clearing existing rows in "{PGVECTOR_COLLECTION_NAME}"...')
+        _clear_collection_rows()
+        print("Cleared.")
+    else:
+        print("Append mode: keeping existing vectors.")
+
     vs = PGVectorStore.create_sync(
         engine=engine,
         table_name=PGVECTOR_COLLECTION_NAME,

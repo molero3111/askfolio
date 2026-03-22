@@ -5,7 +5,7 @@ MVP: A Telegram bot that answers questions about you (CV, experience, projects) 
 ## Features
 
 - **Single-agent LangGraph**: Two nodes — `get_telegram_updates` (fetch new messages) and `llm_reply` (retrieve context from pgvector, call LLM, send reply).
-- **RAG**: PDF(s) in `resources/pdfs/` are ingested into pgvector; each user message is answered using retrieved context.
+- **RAG**: `resources/json/emmanuel_molero_knowledge_base.json` and `resources/json/github_projects.json` are ingested into pgvector (section-aware chunking); each user message is answered using retrieved context.
 - **LLM**: LM Studio locally (default) or any OpenAI-compatible API when `LLM_API_KEY` is set.
 
 ## Setup
@@ -16,20 +16,21 @@ MVP: A Telegram bot that answers questions about you (CV, experience, projects) 
    ```
    Set `TELEGRAM_BOT_TOKEN` in `.env` (create a bot via [@BotFather](https://t.me/BotFather)).
 
-2. **Add your CV PDF**  
-   Place your PDF (CV + project info) in `resources/pdfs/`.
+2. **Knowledge + GitHub JSON**  
+   Ensure `resources/json/emmanuel_molero_knowledge_base.json` and `resources/json/github_projects.json` exist (generate the latter with `python scripts/fetch_github_projects.py` if needed). Optional env: `INGEST_KNOWLEDGE_JSON`, `INGEST_GITHUB_JSON`.
 
 3. **Start the stack**
    ```bash
    docker compose up --build -d
    ```
 
-4. **Ingest PDFs** (one-off, after DB is up)
+4. **Ingest into pgvector** (one-off, after DB is up)
    ```bash
    docker compose run --rm emmanuelai-app python ingest/ingest_pgvector.py
    ```
-   - **First run or append:** Table is created if missing; documents are added. Re-running appends more documents to the existing table.
-   - **Clean re-ingest (drop table and re-create):** use `--reinstall` to drop the collection table first, then create and ingest:
+   - **Default:** Deletes all existing vectors in the collection table, then ingests fresh from the two JSON files (no duplicate runs).
+   - **`--append`:** Skip the delete step; new chunks are added on top (can duplicate if you run twice).
+   - **`--reinstall`:** Drop and recreate the collection table, then ingest (use if schema/table is broken):
      ```bash
      docker compose run --rm emmanuelai-app python ingest/ingest_pgvector.py --reinstall
      ```
@@ -63,9 +64,10 @@ MVP: A Telegram bot that answers questions about you (CV, experience, projects) 
 │   └── prompts/
 │       └── recruiter_prompt.txt
 ├── ingest/
-│   └── ingest_pgvector.py  # Ingest PDFs into pgvector
+│   ├── ingest_pgvector.py  # Ingest JSON → pgvector
+│   └── json_to_documents.py
 ├── resources/
-│   └── pdfs/               # Put your CV PDF here
+│   └── json/               # knowledge base + github_projects.json
 ├── main.py                 # Polling loop that invokes the graph
 ├── docker-compose.yml
 └── Dockerfile
@@ -78,7 +80,7 @@ The database uses the **official [pgvector/pgvector](https://hub.docker.com/r/pg
 - Install dependencies: `pip install -r requirements.txt`
 - Run Postgres with pgvector (e.g. use Docker only for DB: `docker compose up emmanuelai-db -d`)
 - Set `.env` with `DB_CONNECTION_URL` pointing at `localhost:5432` (see `.env.example` for user/password/db name)
-- Run ingestion: `python ingest/ingest_pgvector.py` (add `--reinstall` to drop the table and do a clean re-ingest)
+- Run ingestion: `python ingest/ingest_pgvector.py` (default clears vectors then reloads JSON; `--append` to skip clear; `--reinstall` to drop table)
 - Run bot: `python main.py`
 
 ## License

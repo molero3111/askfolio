@@ -3,8 +3,9 @@ from langchain_huggingface import HuggingFaceEmbeddings
 
 from app.config import (
     DB_CONNECTION_URL_ASYNC,
-    PGVECTOR_COLLECTION_NAME,
     EMBEDDING_MODEL,
+    PGVECTOR_COLLECTION_NAME,
+    RAG_TOP_K,
 )
 
 _engine = None
@@ -26,7 +27,8 @@ def get_vectorstore():
     return _vectorstore
 
 
-def get_relevant_context(query: str, k: int = 4) -> str:
+def get_relevant_context(query: str, k: int | None = None) -> str:
     vs = get_vectorstore()
-    docs = vs.similarity_search(query, k=k)
-    return "\n\n".join(doc.page_content for doc in docs)
+    n = k if k is not None else RAG_TOP_K
+    docs = vs.similarity_search(query, k=n)
+    return "\n\n---\n\n".join(doc.page_content for doc in docs)

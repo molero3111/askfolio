@@ -27,6 +27,17 @@ EMBEDDING_MODEL = _env("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v
 CHUNK_SIZE = int(_env("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(_env("CHUNK_OVERLAP", "50"))
 PDF_DIR = _env("PDF_DIR", "./resources/pdfs")
+# JSON sources for vector ingest (paths relative to project root unless absolute)
+INGEST_KNOWLEDGE_JSON = _env(
+    "INGEST_KNOWLEDGE_JSON",
+    "resources/json/emmanuel_molero_knowledge_base.json",
+)
+INGEST_GITHUB_JSON = _env(
+    "INGEST_GITHUB_JSON",
+    "resources/json/github_projects.json",
+)
+# How many vector chunks to retrieve per question (higher = more repos/context; default 20)
+RAG_TOP_K = int(_env("RAG_TOP_K", "20"))
 # Seconds to sleep after each poll cycle (getUpdates is long-polling with timeout; this is extra delay between cycles)
 POLL_INTERVAL_SECONDS = int(_env("POLL_INTERVAL_SECONDS", "300"))  # 5 minutes
 # getUpdates long-poll timeout (request blocks up to this many seconds for new updates)
