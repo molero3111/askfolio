@@ -11,3 +11,4 @@ build/
 *.log
 .DS_Store
 resources/pdfs/*.pdf
+resources/json/*.json
