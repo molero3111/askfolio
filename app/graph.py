@@ -87,7 +87,7 @@ def llm_reply_node(state: AgentState) -> dict:
         reply = _strip_reasoning(raw)
         logger.info("[llm_reply] LLM reply length=%s chars, sending to chat_id=%s", len(reply), chat_id)
     except Exception as e:
-        reply = f"Sorry, I couldn't process that: {e!s}"
+        reply = f"Sorry, there was an error. I couldn't process that"
         logger.exception("[llm_reply] LLM request failed: %s", e)
     send_message(chat_id, reply)
     return {"pending_messages": pending[1:]}
