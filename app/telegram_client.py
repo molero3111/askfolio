@@ -20,8 +20,12 @@ def get_updates(offset: int | None = None) -> list[dict[str, Any]]:
     return data.get("result", [])
 
 
-def send_message(chat_id: int, text: str) -> None:
+def send_message(
+    chat_id: int, text: str, *, reply_to_message_id: int | None = None
+) -> None:
     url = f"{BASE}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
+    payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+    if reply_to_message_id is not None:
+        payload["reply_parameters"] = {"message_id": reply_to_message_id}
     r = requests.post(url, json=payload, timeout=10)
     r.raise_for_status()

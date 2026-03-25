@@ -23,11 +23,12 @@ def _strip_reasoning(text: str) -> str:
 
 class AgentState(TypedDict):
     offset: int | None
-    pending_messages: Sequence[tuple[int, str]]
+    # (chat_id, message_id to reply to, text)
+    pending_messages: Sequence[tuple[int, int, str]]
 
 
 def get_telegram_updates_node(state: AgentState) -> dict:
-    """Node: fetch new Telegram messages and return (chat_id, text) list."""
+    """Node: fetch new Telegram messages and return (chat_id, message_id, text) list."""
     offset = state.get("offset")
     updates = get_updates(offset=offset)
     num_updates = len(updates)
@@ -43,11 +44,17 @@ def get_telegram_updates_node(state: AgentState) -> dict:
         text = (msg.get("text") or "").strip()
         if not text:
             continue
-        pending.append((msg["chat"]["id"], text))
+        pending.append((msg["chat"]["id"], msg["message_id"], text))
 
     logger.info("[get_telegram_updates] new messages with text=%s", len(pending))
-    for i, (cid, text) in enumerate(pending):
-        logger.info("[get_telegram_updates] message %s: chat_id=%s, text=%s", i + 1, cid, text[:80] + "..." if len(text) > 80 else text)
+    for i, (cid, mid, text) in enumerate(pending):
+        logger.info(
+            "[get_telegram_updates] message %s: chat_id=%s message_id=%s text=%s",
+            i + 1,
+            cid,
+            mid,
+            text[:80] + "..." if len(text) > 80 else text,
+        )
 
     # Only advance offset when we received updates (ack to Telegram so they are not returned again)
     next_offset = max_update_id + 1 if num_updates > 0 else offset
@@ -64,9 +71,15 @@ def llm_reply_node(state: AgentState) -> dict:
         logger.info("[llm_reply] no pending messages, skipping")
         return {"pending_messages": []}
 
-    chat_id, user_input = pending[0]
+    chat_id, reply_to_message_id, user_input = pending[0]
     remaining = len(pending) - 1
-    logger.info("[llm_reply] processing 1 message (chat_id=%s, %s more in queue). user_input=%s", chat_id, remaining, user_input[:80] + "..." if len(user_input) > 80 else user_input)
+    logger.info(
+        "[llm_reply] processing 1 message (chat_id=%s, reply_to=%s, %s more in queue). user_input=%s",
+        chat_id,
+        reply_to_message_id,
+        remaining,
+        user_input[:80] + "..." if len(user_input) > 80 else user_input,
+    )
 
     context = get_relevant_context(user_input)
     logger.info("[llm_reply] retrieved context length=%s chars", len(context))
@@ -100,7 +113,7 @@ def llm_reply_node(state: AgentState) -> dict:
                 "then check on the host: curl -sS http://127.0.0.1:11434/api/tags",
                 LLM_API_URL,
             )
-    send_message(chat_id, reply)
+    send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
     return {"pending_messages": pending[1:]}
 
 
