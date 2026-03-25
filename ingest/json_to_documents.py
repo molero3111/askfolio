@@ -202,7 +202,7 @@ def _github_index_documents(projects: list) -> list[Document]:
 
     intro = (
         "# GitHub repository index\n\n"
-        "Complete list of Emmanuel's public repositories (name, primary language on GitHub, "
+        "Complete list of public GitHub repositories (name, primary language on GitHub, "
         "short description, URL). When asked which projects exist or which use a language, "
         "use every matching line below and include each URL.\n"
     )

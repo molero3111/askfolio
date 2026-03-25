@@ -9,7 +9,10 @@ def _env(key: str, default: str = "") -> str:
 TELEGRAM_BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN")
 # File to persist last Telegram update_id (so we send offset on next getUpdates and after restart)
 TELEGRAM_OFFSET_FILE = _env("TELEGRAM_OFFSET_FILE", "telegram_offset.txt")
-LLM_API_URL = _env("LLM_API_URL", "http://host.docker.internal:1234/v1/chat/completions")
+LLM_API_URL = _env(
+    "LLM_API_URL",
+    "http://host.docker.internal:11434/v1/chat/completions",
+)
 LLM_MODEL = _env("LLM_MODEL", "local-model")
 LLM_API_KEY = _env("LLM_API_KEY", "")
 # Timeout in seconds for the HTTP request to the LLM API (default 600 = 10 min for slow local models)
@@ -30,7 +33,7 @@ PDF_DIR = _env("PDF_DIR", "./resources/pdfs")
 # JSON sources for vector ingest (paths relative to project root unless absolute)
 INGEST_KNOWLEDGE_JSON = _env(
     "INGEST_KNOWLEDGE_JSON",
-    "resources/json/emmanuel_molero_knowledge_base.json",
+    "resources/json/cv.json",
 )
 INGEST_GITHUB_JSON = _env(
     "INGEST_GITHUB_JSON",

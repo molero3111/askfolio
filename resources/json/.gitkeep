@@ -1,0 +1,2 @@
+# Place your CV json here
+# docker compose run --rm app python ingest/ingest_pgvector.py
