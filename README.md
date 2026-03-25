@@ -56,20 +56,20 @@ The ingest pipeline turns each logical block into documents with metadata so sea
 
 5. **Ingest into pgvector** (one-off, after DB is up)
    ```bash
-   docker compose run --rm emmanuelai-app python ingest/ingest_pgvector.py
+   docker compose run --rm app-askfolio python ingest/ingest_pgvector.py
    ```
    - **Default:** Deletes all existing vectors in the collection table, then ingests fresh from `cv.json` and `github_projects.json`.
    - **`--append`:** Skip the delete step (can duplicate if run twice).
    - **`--reinstall`:** Drop and recreate the collection table, then ingest:
      ```bash
-     docker compose run --rm emmanuelai-app python ingest/ingest_pgvector.py --reinstall
+     docker compose run --rm app-askfolio python ingest/ingest_pgvector.py --reinstall
      ```
 
 - **Offset persistence:** The last Telegram `update_id` is saved to `telegram_offset.txt` (or `TELEGRAM_OFFSET_FILE`) so after a restart the bot only fetches new updates.
 
 - **After changing code or dependencies:**
   ```bash
-  docker compose build emmanuelai-app && docker compose up -d emmanuelai-app
+  docker compose build app-askfolio && docker compose up -d app-askfolio
   ```
 
 ## LLM configuration summary
@@ -81,6 +81,23 @@ The ingest pipeline turns each logical block into documents with metadata so sea
 | **Cloud (OpenAI, DeepSeek, …)** | Provider chat completions URL | Provider model id | API key |
 
 Use **`LLM_REQUEST_TIMEOUT`** for slow local models (default 600s). Use **`RAG_TOP_K`** to control how many chunks are passed into the prompt (default 20).
+
+### Troubleshooting: `ConnectTimeout` / `host.docker.internal:11434`
+
+The app container talks to Ollama on the **host**. A **timeout** (not “connection refused”) usually means nothing is accepting TCP on the host address Docker uses—often because **Ollama only listens on `127.0.0.1`**, while traffic from the container arrives on another host interface.
+
+1. **Bind Ollama on all interfaces** (Linux systemd example):
+   - `sudo systemctl edit ollama.service` and add:
+     ```ini
+     [Service]
+     Environment="OLLAMA_HOST=0.0.0.0:11434"
+     ```
+   - `sudo systemctl daemon-reload && sudo systemctl restart ollama`
+2. On the **host**, confirm: `curl -sS http://127.0.0.1:11434/api/tags`
+3. From the **app container**, confirm:  
+   `docker compose exec app-askfolio python -c "import urllib.request; urllib.request.urlopen('http://host.docker.internal:11434/api/tags', timeout=5).read()"`
+
+If step 3 still fails, check host firewalls and that `extra_hosts: host.docker.internal:host-gateway` is present in `docker-compose.yml` (already set for this project).
 
 ## Project layout
 
@@ -109,8 +126,8 @@ The database uses the **official [pgvector/pgvector](https://hub.docker.com/r/pg
 ## Running without Docker
 
 - Install dependencies: `pip install -r requirements.txt`
-- Run Postgres with pgvector (e.g. `docker compose up emmanuelai-db -d`)
-- Set `.env` with `DB_CONNECTION_URL` pointing at `localhost:5432` (see `.env.example`)
+- Run Postgres with pgvector (e.g. `docker compose up db-askfolio -d`)
+- Set `.env` with `POSTGRES_HOST=localhost`, `POSTGRES_PORT` matching `POSTGRES_PUBLISH_PORT` from Compose, and the same `POSTGRES_*` credentials as the db container (see `.env.example`)
 - Run Ollama on the host; point `LLM_API_URL` at `http://127.0.0.1:11434/v1/chat/completions`
 - Run ingestion: `python ingest/ingest_pgvector.py`
 - Run bot: `python main.py`

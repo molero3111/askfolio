@@ -16,7 +16,10 @@ def get_vectorstore():
     global _engine, _vectorstore
     if _vectorstore is None:
         if not DB_CONNECTION_URL_ASYNC:
-            raise ValueError("DB_CONNECTION_URL must be set.")
+            raise ValueError(
+                "Postgres connection missing: set POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB "
+                "(and POSTGRES_HOST / POSTGRES_PORT if not using defaults)."
+            )
         _engine = PGEngine.from_connection_string(url=DB_CONNECTION_URL_ASYNC)
         embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
         _vectorstore = PGVectorStore.create_sync(

@@ -87,8 +87,19 @@ def llm_reply_node(state: AgentState) -> dict:
         reply = _strip_reasoning(raw)
         logger.info("[llm_reply] LLM reply length=%s chars, sending to chat_id=%s", len(reply), chat_id)
     except Exception as e:
-        reply = f"Sorry, there was an error. I couldn't process that"
+        reply = "Sorry, there was an error. I couldn't process that."
         logger.exception("[llm_reply] LLM request failed: %s", e)
+        if isinstance(
+            e,
+            (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError),
+        ):
+            logger.error(
+                "[llm_reply] Cannot reach LLM at %s. "
+                "If Ollama is on the host and the app runs in Docker, bind Ollama on all interfaces "
+                "(e.g. set OLLAMA_HOST=0.0.0.0:11434 for the Ollama service, restart Ollama), "
+                "then check on the host: curl -sS http://127.0.0.1:11434/api/tags",
+                LLM_API_URL,
+            )
     send_message(chat_id, reply)
     return {"pending_messages": pending[1:]}
 

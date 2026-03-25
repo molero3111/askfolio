@@ -1,41 +1,45 @@
 services:
-  emmanuelai-app:
+  app-askfolio:
     build:
       context: .
       dockerfile: Dockerfile
-    image: emmanuelai-app
-    container_name: emmanuelai-app
+    image: app-askfolio
+    container_name: app-askfolio
     restart: unless-stopped
     env_file:
       - .env
     depends_on:
-      - emmanuelai-db
+      - db-askfolio
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: ["python", "main.py"]
     volumes:
       - .:/app
     networks:
-      - emmanuelai-network
+      - network-askfolio
 
-  emmanuelai-db:
+  db-askfolio:
     image: pgvector/pgvector:pg15
-    container_name: emmanuelai-db
+    container_name: db-askfolio
     restart: unless-stopped
-    ports:
-      - "5432:5432"
+    env_file:
+      - .env
     environment:
-      POSTGRES_DB: emmanuelai_db
-      POSTGRES_USER: emmanuelai_user
-      POSTGRES_PASSWORD: emmanuelai_pass
+      POSTGRES_DB: ${POSTGRES_DB:-askfolio_db}
+      POSTGRES_USER: ${POSTGRES_USER:-askfolio_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-askfolio_pass}
+    ports:
+      - "${POSTGRES_PUBLISH_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - emmanuelai-network
+      - network-askfolio
 
 volumes:
   postgres_data:
+    name: askfolio_postgres_data
 
 networks:
-  emmanuelai-network:
+  network-askfolio:
+    name: network-askfolio
     driver: bridge

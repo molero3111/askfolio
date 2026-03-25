@@ -1,9 +1,25 @@
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 
 def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
+
+
+def _postgres_dsn() -> str:
+    """Build postgresql:// from POSTGRES_* (same vars as the db container)."""
+    user = _env("POSTGRES_USER")
+    password = _env("POSTGRES_PASSWORD")
+    db = _env("POSTGRES_DB")
+    if not user or not password or not db:
+        return ""
+    host = _env("POSTGRES_HOST", "db-askfolio")
+    port = _env("POSTGRES_PORT", "5432")
+    u = quote(user, safe="")
+    p = quote(password, safe="")
+    d = quote(db, safe="")
+    return f"postgresql://{u}:{p}@{host}:{port}/{d}"
 
 
 TELEGRAM_BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN")
@@ -17,7 +33,7 @@ LLM_MODEL = _env("LLM_MODEL", "local-model")
 LLM_API_KEY = _env("LLM_API_KEY", "")
 # Timeout in seconds for the HTTP request to the LLM API (default 600 = 10 min for slow local models)
 LLM_REQUEST_TIMEOUT = int(_env("LLM_REQUEST_TIMEOUT", "600"))
-DB_CONNECTION_URL = _env("DB_CONNECTION_URL")
+DB_CONNECTION_URL = _postgres_dsn()
 # PGEngine uses async SQLAlchemy; it requires postgresql+asyncpg:// (asyncpg driver)
 DB_CONNECTION_URL_ASYNC = (
     DB_CONNECTION_URL.replace("postgresql://", "postgresql+asyncpg://", 1)

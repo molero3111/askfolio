@@ -82,7 +82,10 @@ def main():
         sys.exit(1)
 
     if not DB_CONNECTION_URL_ASYNC:
-        print("DB_CONNECTION_URL must be set in .env")
+        print(
+            "Postgres env missing: set POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB "
+            "(and POSTGRES_HOST / POSTGRES_PORT if not using defaults)."
+        )
         sys.exit(1)
 
     print(f"Loading documents from:\n  - {kb_path}\n  - {gh_path}")
