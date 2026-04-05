@@ -73,11 +73,12 @@ LANGSMITH_TRACING = _env_bool("LANGSMITH_TRACING", True)
 LANGSMITH_PROJECT = _env("LANGSMITH_PROJECT", "askfolio-dev")
 LANGSMITH_ENDPOINT = _env("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
 LANGSMITH_ENABLED = bool(LANGSMITH_API_KEY and LANGSMITH_TRACING)
+LANGSMITH_RUNTIME_FLAG = "ASKFOLIO_LANGSMITH_ENABLED"
 
 
 def is_langsmith_enabled() -> bool:
-    """Read LangSmith flags dynamically from env (supports runtime disable)."""
-    return bool(_env("LANGSMITH_API_KEY") and _env_bool("LANGSMITH_TRACING", True))
+    """Runtime LangSmith toggle for manual spans (supports fail-open disable)."""
+    return _env_bool(LANGSMITH_RUNTIME_FLAG, LANGSMITH_ENABLED)
 
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"

@@ -14,6 +14,7 @@ from app.config import (
     LANGSMITH_ENABLED,
     LANGSMITH_ENDPOINT,
     LANGSMITH_PROJECT,
+    LANGSMITH_RUNTIME_FLAG,
     POLL_INTERVAL_SECONDS,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_OFFSET_FILE,
@@ -21,12 +22,16 @@ from app.config import (
 from app.graph import build_graph
 
 if LANGSMITH_ENABLED:
-    os.environ["LANGSMITH_TRACING"] = "true"
+    # Disable global auto-tracing (LangGraph node-level noise on empty polls).
+    # We only emit manual spans via tracing_context() in llm_reply flow.
+    os.environ["LANGSMITH_TRACING"] = "false"
     os.environ["LANGSMITH_API_KEY"] = LANGSMITH_API_KEY
     os.environ["LANGSMITH_PROJECT"] = LANGSMITH_PROJECT
     os.environ["LANGSMITH_ENDPOINT"] = LANGSMITH_ENDPOINT
+    os.environ[LANGSMITH_RUNTIME_FLAG] = "true"
 else:
     os.environ["LANGSMITH_TRACING"] = "false"
+    os.environ[LANGSMITH_RUNTIME_FLAG] = "false"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,7 +79,7 @@ def _save_offset(offset: int) -> None:
 def main():
     logger = logging.getLogger(__name__)
     logger.info(
-        "LangSmith tracing: %s (project=%s)",
+        "LangSmith tracing: %s (manual spans only, project=%s)",
         "enabled" if LANGSMITH_ENABLED else "disabled",
         LANGSMITH_PROJECT,
     )
@@ -91,7 +96,7 @@ def main():
                     "LangSmith tracing error detected; disabling tracing and continuing. Error: %s",
                     exc,
                 )
-                os.environ["LANGSMITH_TRACING"] = "false"
+                os.environ[LANGSMITH_RUNTIME_FLAG] = "false"
                 continue
             raise
         if state.get("offset") is not None:
