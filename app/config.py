@@ -7,6 +7,11 @@ def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
+def _env_bool(key: str, default: bool = False) -> bool:
+    val = _env(key, "true" if default else "false").strip().lower()
+    return val in {"1", "true", "yes", "on"}
+
+
 def _postgres_dsn() -> str:
     """Build postgresql:// from POSTGRES_* (same vars as the db container)."""
     user = _env("POSTGRES_USER")
@@ -61,6 +66,19 @@ RAG_TOP_K = int(_env("RAG_TOP_K", "20"))
 POLL_INTERVAL_SECONDS = int(_env("POLL_INTERVAL_SECONDS", "300"))  # 5 minutes
 # getUpdates long-poll timeout (request blocks up to this many seconds for new updates)
 GET_UPDATES_TIMEOUT = int(_env("GET_UPDATES_TIMEOUT", "30"))
+
+# LangSmith tracing (optional)
+LANGSMITH_API_KEY = _env("LANGSMITH_API_KEY")
+LANGSMITH_TRACING = _env_bool("LANGSMITH_TRACING", True)
+LANGSMITH_PROJECT = _env("LANGSMITH_PROJECT", "askfolio-dev")
+LANGSMITH_ENDPOINT = _env("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
+LANGSMITH_ENABLED = bool(LANGSMITH_API_KEY and LANGSMITH_TRACING)
+
+
+def is_langsmith_enabled() -> bool:
+    """Read LangSmith flags dynamically from env (supports runtime disable)."""
+    return bool(_env("LANGSMITH_API_KEY") and _env_bool("LANGSMITH_TRACING", True))
+
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 RECRUITER_PROMPT_PATH = PROMPTS_DIR / "recruiter_prompt.txt"

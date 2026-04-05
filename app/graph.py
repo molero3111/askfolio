@@ -5,7 +5,16 @@ from typing import TypedDict, Sequence
 
 from langgraph.graph import StateGraph, START, END
 
-from app.config import LLM_API_KEY, LLM_API_URL, LLM_MODEL, LLM_REQUEST_TIMEOUT, RECRUITER_PROMPT_PATH
+from app.config import (
+    LANGSMITH_PROJECT,
+    LLM_API_KEY,
+    LLM_API_URL,
+    LLM_MODEL,
+    LLM_REQUEST_TIMEOUT,
+    RECRUITER_PROMPT_PATH,
+    is_langsmith_enabled,
+)
+from app.observability import traceable, tracing_context
 from app.rag import get_relevant_context
 from app.telegram_client import get_updates, send_message
 
@@ -25,6 +34,30 @@ class AgentState(TypedDict):
     offset: int | None
     # (chat_id, message_id to reply to, text)
     pending_messages: Sequence[tuple[int, int, str]]
+
+
+@traceable(name="retrieve_context", run_type="retriever")
+def _retrieve_context(user_input: str) -> str:
+    return get_relevant_context(user_input)
+
+
+@traceable(name="call_llm_http", run_type="llm")
+def _call_llm(prompt_content: str) -> str:
+    headers = {"Content-Type": "application/json"}
+    if LLM_API_KEY:
+        headers["Authorization"] = f"Bearer {LLM_API_KEY}"
+    payload = {
+        "model": LLM_MODEL,
+        "messages": [{"role": "user", "content": prompt_content}],
+    }
+    r = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=LLM_REQUEST_TIMEOUT)
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"].strip()
+
+
+@traceable(name="telegram_send_message", run_type="tool")
+def _send_telegram(chat_id: int, reply: str, reply_to_message_id: int) -> None:
+    send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
 
 
 def get_telegram_updates_node(state: AgentState) -> dict:
@@ -81,39 +114,51 @@ def llm_reply_node(state: AgentState) -> dict:
         user_input[:80] + "..." if len(user_input) > 80 else user_input,
     )
 
-    context = get_relevant_context(user_input)
-    logger.info("[llm_reply] retrieved context length=%s chars", len(context))
-
-    prompt_template = RECRUITER_PROMPT_PATH.read_text(encoding="utf-8")
-    prompt_content = prompt_template.format(context=context, user_input=user_input)
-    headers = {"Content-Type": "application/json"}
-    if LLM_API_KEY:
-        headers["Authorization"] = f"Bearer {LLM_API_KEY}"
-    payload = {
-        "model": LLM_MODEL,
-        "messages": [{"role": "user", "content": prompt_content}],
+    trace_meta = {
+        "chat_id": chat_id,
+        "message_id": reply_to_message_id,
+        "message_text": user_input,
+        "llm_model": LLM_MODEL,
     }
-    try:
-        r = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=LLM_REQUEST_TIMEOUT)
-        r.raise_for_status()
-        raw = r.json()["choices"][0]["message"]["content"].strip()
-        reply = _strip_reasoning(raw)
-        logger.info("[llm_reply] LLM reply length=%s chars, sending to chat_id=%s", len(reply), chat_id)
-    except Exception as e:
-        reply = "Sorry, there was an error. I couldn't process that."
-        logger.exception("[llm_reply] LLM request failed: %s", e)
-        if isinstance(
-            e,
-            (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError),
+    with tracing_context(
+        enabled=is_langsmith_enabled(),
+        project_name=LANGSMITH_PROJECT,
+        tags=["telegram", "recruiter-bot"],
+        metadata=trace_meta,
+    ):
+        context = _retrieve_context(user_input)
+        logger.info("[llm_reply] retrieved context length=%s chars", len(context))
+
+        prompt_template = RECRUITER_PROMPT_PATH.read_text(encoding="utf-8")
+        prompt_content = prompt_template.format(context=context, user_input=user_input)
+        with tracing_context(
+            enabled=is_langsmith_enabled(),
+            project_name=LANGSMITH_PROJECT,
+            metadata={
+                "context_length": len(context),
+                # Keep metadata bounded to avoid huge trace payloads.
+                "context_retrieved": context[:6000],
+            },
         ):
-            logger.error(
-                "[llm_reply] Cannot reach LLM at %s. "
-                "If Ollama is on the host and the app runs in Docker, bind Ollama on all interfaces "
-                "(e.g. set OLLAMA_HOST=0.0.0.0:11434 for the Ollama service, restart Ollama), "
-                "then check on the host: curl -sS http://127.0.0.1:11434/api/tags",
-                LLM_API_URL,
-            )
-    send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+            try:
+                raw = _call_llm(prompt_content)
+                reply = _strip_reasoning(raw)
+                logger.info("[llm_reply] LLM reply length=%s chars, sending to chat_id=%s", len(reply), chat_id)
+            except Exception as e:
+                reply = "Sorry, there was an error. I couldn't process that."
+                logger.exception("[llm_reply] LLM request failed: %s", e)
+                if isinstance(
+                    e,
+                    (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError),
+                ):
+                    logger.error(
+                        "[llm_reply] Cannot reach LLM at %s. "
+                        "If Ollama is on the host and the app runs in Docker, bind Ollama on all interfaces "
+                        "(e.g. set OLLAMA_HOST=0.0.0.0:11434 for the Ollama service, restart Ollama), "
+                        "then check on the host: curl -sS http://127.0.0.1:11434/api/tags",
+                        LLM_API_URL,
+                    )
+            _send_telegram(chat_id, reply, reply_to_message_id)
     return {"pending_messages": pending[1:]}
 
 

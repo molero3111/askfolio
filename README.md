@@ -82,6 +82,42 @@ The ingest pipeline turns each logical block into documents with metadata so sea
 
 Use **`LLM_REQUEST_TIMEOUT`** for slow local models (default 600s). Use **`RAG_TOP_K`** to control how many chunks are passed into the prompt (default 20).
 
+## LangSmith tracing (optional)
+
+This bot can send traces to LangSmith for better observability than raw logs (runs, nested spans, latency, and errors).
+
+### 1) Create a LangSmith API key
+
+1. Open [LangSmith](https://smith.langchain.com/) and sign in.
+2. Click your profile/avatar (top-right) and open **Settings**.
+3. Go to **API Keys**.
+4. Click **Create API Key**, copy the key (starts with `lsv2_...`), and store it safely.
+
+### 2) Configure environment
+
+In `.env`:
+
+```env
+LANGSMITH_API_KEY=lsv2_...
+LANGSMITH_TRACING=true
+LANGSMITH_PROJECT=askfolio-dev
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```
+
+Tracing is **optional** and only turns on when `LANGSMITH_API_KEY` is set.
+
+### 3) Rebuild/restart app
+
+```bash
+docker compose up -d --build app-askfolio
+```
+
+What gets traced in this project:
+- Telegram message metadata (`chat_id`, `message_id`, message text)
+- Retrieved RAG context (length + bounded context snippet)
+- LLM HTTP call span
+- Telegram sendMessage span
+
 ### Troubleshooting: `ConnectTimeout` / `host.docker.internal:11434`
 
 The app container talks to Ollama on the **host**. A **timeout** (not “connection refused”) usually means nothing is accepting TCP on the host address Docker uses—often because **Ollama only listens on `127.0.0.1`**, while traffic from the container arrives on another host interface.
