@@ -65,7 +65,7 @@ RAG_TOP_K = int(_env("RAG_TOP_K", "20"))
 # Seconds to sleep after each poll cycle (getUpdates is long-polling with timeout; this is extra delay between cycles)
 POLL_INTERVAL_SECONDS = int(_env("POLL_INTERVAL_SECONDS", "300"))  # 5 minutes
 # getUpdates long-poll timeout (request blocks up to this many seconds for new updates)
-GET_UPDATES_TIMEOUT = int(_env("GET_UPDATES_TIMEOUT", "30"))
+GET_UPDATES_TIMEOUT = int(_env("GET_UPDATES_TIMEOUT", "60"))
 
 # LangSmith tracing (optional)
 LANGSMITH_API_KEY = _env("LANGSMITH_API_KEY")
