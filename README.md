@@ -163,7 +163,7 @@ The database uses the **official [pgvector/pgvector](https://hub.docker.com/r/pg
 
 - Install dependencies: `pip install -r requirements.txt`
 - Run Postgres with pgvector (e.g. `docker compose up db-askfolio -d`)
-- Set `.env` with `POSTGRES_HOST=localhost`, `POSTGRES_PORT` matching `POSTGRES_PUBLISH_PORT` from Compose, and the same `POSTGRES_*` credentials as the db container (see `.env.example`)
+- If you run the app on host (not Docker), use a local Postgres (or temporarily expose Docker Postgres) and set `.env` `POSTGRES_HOST` / `POSTGRES_PORT` accordingly.
 - Run Ollama on the host; point `LLM_API_URL` at `http://127.0.0.1:11434/v1/chat/completions`
 - Run ingestion: `python ingest/ingest_pgvector.py`
 - Run bot: `python main.py`
