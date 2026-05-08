@@ -86,7 +86,7 @@ def main():
     if not TELEGRAM_BOT_TOKEN:
         raise SystemExit("Set TELEGRAM_BOT_TOKEN in .env")
     graph = build_graph()
-    state: dict = {"offset": _load_offset(), "pending_messages": []}
+    state: dict = {"offset": _load_offset(), "pending_messages": [], "conversations": {}}
     while True:
         try:
             state = graph.invoke(state)

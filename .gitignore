@@ -12,3 +12,5 @@ build/
 .DS_Store
 resources/pdfs/*.pdf
 resources/json/*.json
+credentials.json
+token.json
