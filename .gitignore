@@ -1,6 +1,5 @@
 .env
 telegram_offset.txt
-.venv/
 venv/
 __pycache__/
 *.py[cod]
