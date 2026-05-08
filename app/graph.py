@@ -5,7 +5,15 @@ from typing import TypedDict, Sequence
 
 from langgraph.graph import StateGraph, START, END
 
+from app.calendar_client import (
+    create_meeting,
+    format_slot_label,
+    get_available_slots,
+    is_calendar_configured,
+    resolve_timezone,
+)
 from app.config import (
+    CALENDAR_DISPLAY_TIMEZONE,
     LANGSMITH_PROJECT,
     LLM_API_KEY,
     LLM_API_URL,
@@ -14,26 +22,61 @@ from app.config import (
     RECRUITER_PROMPT_PATH,
     is_langsmith_enabled,
 )
+from app.conversation import ConversationState, SchedulingMode
 from app.observability import traceable, tracing_context
 from app.rag import get_relevant_context
 from app.telegram_client import get_updates, send_message
 
 logger = logging.getLogger(__name__)
 
+_SCHEDULING_KEYWORDS = frozenset(
+    {
+        "schedule", "meeting", "book", "appointment", "calendar",
+        "available", "availability", "slot", "call", "interview",
+        "set up", "when can", "catch up", "talk", "arrange",
+    }
+)
+_CANCEL_KEYWORDS = frozenset(
+    {
+        "cancel", "nevermind", "never mind", "stop", "forget it",
+        "no thanks", "not interested", "exit", "quit", "discard", "nope",
+    }
+)
+
+
+def _is_scheduling_intent(text: str) -> bool:
+    lower = text.lower()
+    return any(kw in lower for kw in _SCHEDULING_KEYWORDS)
+
+
+def _is_cancel_intent(text: str) -> bool:
+    lower = text.lower()
+    return any(kw in lower for kw in _CANCEL_KEYWORDS)
+
 
 def _strip_reasoning(text: str) -> str:
-    """Remove <think>...</think> blocks and similar reasoning so only the final answer is sent to Telegram."""
-    # Remove <think>...</think> (and unclosed <think> at end)
+    """Remove <think>...</think> blocks so only the final answer is sent."""
     out = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
     out = re.sub(r"<think>[\s\S]*", "", out, flags=re.IGNORECASE)
     out = out.strip()
     return out if out else "(No reply could be extracted.)"
 
 
+def _format_history(history: list[dict]) -> str:
+    if not history:
+        return "(None)"
+    return "\n".join(
+        f"{'Recruiter' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+        for m in history
+    )
+
+
 class AgentState(TypedDict):
     offset: int | None
     # (chat_id, message_id to reply to, text)
     pending_messages: Sequence[tuple[int, int, str]]
+    # str(chat_id) -> ConversationState.to_dict()
+    conversations: dict
 
 
 @traceable(name="retrieve_context", run_type="retriever")
@@ -58,6 +101,177 @@ def _call_llm(prompt_content: str) -> str:
 @traceable(name="telegram_send_message", run_type="tool")
 def _send_telegram(chat_id: int, reply: str, reply_to_message_id: int) -> None:
     send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+
+
+def _tz_display_name(iana_key: str) -> str:
+    """Return a readable timezone label, e.g. 'Eastern Time (ET)' or 'America/New_York'."""
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, timezone as _tz
+    try:
+        abbr = datetime.now(_tz.utc).astimezone(ZoneInfo(iana_key)).strftime("%Z")
+        # Build a friendly name from the IANA key city part
+        city = iana_key.split("/")[-1].replace("_", " ")
+        return f"{city} ({abbr})"
+    except Exception:
+        return iana_key
+
+
+def _handle_scheduling(
+    conv: ConversationState,
+    user_input: str,
+    chat_id: int,
+    message_id: int,
+) -> None:
+    """Drive the scheduling state machine for a single message. Mutates conv in place."""
+
+    if _is_cancel_intent(user_input):
+        reply = "No problem! Feel free to ask me anything else about Emmanuel's background."
+        _send_telegram(chat_id, reply, message_id)
+        conv.add_message("user", user_input)
+        conv.add_message("assistant", reply)
+        conv.mode = SchedulingMode.CANCELLED
+        conv.reset_scheduling()
+        return
+
+    if conv.mode == SchedulingMode.IDLE:
+        if not is_calendar_configured():
+            reply = "Meeting scheduling isn't configured yet. Please contact Emmanuel directly."
+            _send_telegram(chat_id, reply, message_id)
+            conv.add_message("user", user_input)
+            conv.add_message("assistant", reply)
+            return
+
+        display_tz_key = conv.recruiter_display_tz or CALENDAR_DISPLAY_TIMEZONE
+        try:
+            slots = get_available_slots(display_tz_key=display_tz_key)
+        except Exception:
+            logger.exception("[scheduling] Failed to fetch calendar slots")
+            reply = "I couldn't retrieve available slots right now. Please try again later or contact Emmanuel directly."
+            _send_telegram(chat_id, reply, message_id)
+            conv.add_message("user", user_input)
+            conv.add_message("assistant", reply)
+            return
+
+        if not slots:
+            reply = (
+                "There are no available slots in the next 7 days. "
+                "Please try again later or contact Emmanuel directly."
+            )
+            _send_telegram(chat_id, reply, message_id)
+            conv.add_message("user", user_input)
+            conv.add_message("assistant", reply)
+            return
+
+        conv.proposed_slots = slots
+        conv.mode = SchedulingMode.AWAITING_SLOT_SELECTION
+        slot_list = "\n".join(f"{i + 1}. {s['label']}" for i, s in enumerate(slots))
+        tz_label = _tz_display_name(display_tz_key)
+        reply = (
+            f"Here are Emmanuel's available time slots (all times in {tz_label}):\n\n"
+            f"{slot_list}\n\n"
+            "Reply with the number of your preferred slot. "
+            "If you'd like to see these in a different timezone, just say so — "
+            "for example: \"show in Pacific Time\" or \"convert to CET\"."
+        )
+        _send_telegram(chat_id, reply, message_id)
+        conv.add_message("user", user_input)
+        conv.add_message("assistant", reply)
+        return
+
+    if conv.mode == SchedulingMode.AWAITING_SLOT_SELECTION:
+        # Slot number takes priority
+        number_match = re.search(r"\b([1-6])\b", user_input)
+        if number_match:
+            idx = int(number_match.group(1)) - 1
+            if 0 <= idx < len(conv.proposed_slots):
+                conv.selected_slot = conv.proposed_slots[idx]
+                conv.mode = SchedulingMode.AWAITING_RECRUITER_INFO
+                reply = (
+                    f"Great choice! I've noted: {conv.selected_slot['label']}.\n\n"
+                    "Could you share your name and email so I can send you a calendar invite?\n\n"
+                    "Please reply in this format:\n"
+                    "Name: Your Name\n"
+                    "Email: your@email.com"
+                )
+                _send_telegram(chat_id, reply, message_id)
+                conv.add_message("user", user_input)
+                conv.add_message("assistant", reply)
+                return
+
+        # No valid number — check if it's a timezone change request
+        resolved_tz = resolve_timezone(user_input)
+        if resolved_tz:
+            from zoneinfo import ZoneInfo
+            conv.recruiter_display_tz = resolved_tz
+            display_tz = ZoneInfo(resolved_tz)
+            slot_list = "\n".join(
+                f"{i + 1}. {format_slot_label(s['start'], display_tz)}"
+                for i, s in enumerate(conv.proposed_slots)
+            )
+            tz_label = _tz_display_name(resolved_tz)
+            reply = (
+                f"Here are the same slots converted to {tz_label}:\n\n{slot_list}\n\n"
+                "Reply with the number of your preferred slot."
+            )
+            _send_telegram(chat_id, reply, message_id)
+            conv.add_message("user", user_input)
+            conv.add_message("assistant", reply)
+            return
+
+        slot_count = len(conv.proposed_slots)
+        reply = (
+            f"Please reply with a number between 1 and {slot_count} to select your preferred slot, "
+            "or tell me a timezone if you'd like the times converted."
+        )
+        _send_telegram(chat_id, reply, message_id)
+        conv.add_message("user", user_input)
+        conv.add_message("assistant", reply)
+        return
+
+    if conv.mode == SchedulingMode.AWAITING_RECRUITER_INFO:
+        email_match = re.search(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", user_input)
+        name_match = re.search(r"(?i)name\s*:\s*(.+)", user_input)
+
+        name = name_match.group(1).strip() if name_match else None
+        email = email_match.group(0) if email_match else None
+
+        if not name or not email:
+            missing = []
+            if not name:
+                missing.append("Name: Your Name")
+            if not email:
+                missing.append("Email: your@email.com")
+            reply = "I couldn't parse that. Please reply with:\n" + "\n".join(missing)
+            _send_telegram(chat_id, reply, message_id)
+            conv.add_message("user", user_input)
+            conv.add_message("assistant", reply)
+            return
+
+        conv.recruiter_name = name
+        conv.recruiter_email = email
+
+        try:
+            event_link = create_meeting(conv.selected_slot, name, email)
+            reply = (
+                f"Meeting booked!\n\n"
+                f"Date: {conv.selected_slot['label']}\n"
+                f"Name: {name}\n"
+                f"Email: {email}\n\n"
+                f"A calendar invite has been sent to {email}."
+            )
+            if event_link:
+                reply += f"\n\nEvent details: {event_link}"
+        except Exception:
+            logger.exception("[scheduling] Failed to create calendar event")
+            reply = (
+                "Sorry, there was an error creating the calendar event. "
+                "Please try again or contact Emmanuel directly."
+            )
+
+        _send_telegram(chat_id, reply, message_id)
+        conv.add_message("user", user_input)
+        conv.add_message("assistant", reply)
+        conv.reset_scheduling()
 
 
 def get_telegram_updates_node(state: AgentState) -> dict:
@@ -89,7 +303,6 @@ def get_telegram_updates_node(state: AgentState) -> dict:
             text[:80] + "..." if len(text) > 80 else text,
         )
 
-    # Only advance offset when we received updates (ack to Telegram so they are not returned again)
     next_offset = max_update_id + 1 if num_updates > 0 else offset
     return {
         "pending_messages": pending,
@@ -97,23 +310,36 @@ def get_telegram_updates_node(state: AgentState) -> dict:
     }
 
 
-def llm_reply_node(state: AgentState) -> dict:
-    """Node: for the first pending message, retrieve context, call LLM, send reply."""
+def process_message_node(state: AgentState) -> dict:
+    """Node: process the first pending message — scheduling state machine or LLM Q&A."""
     pending = list(state.get("pending_messages") or [])
     if not pending:
-        logger.info("[llm_reply] no pending messages, skipping")
+        logger.info("[process_message] no pending messages, skipping")
         return {"pending_messages": []}
 
+    conversations: dict = dict(state.get("conversations") or {})
     chat_id, reply_to_message_id, user_input = pending[0]
     remaining = len(pending) - 1
     logger.info(
-        "[llm_reply] processing 1 message (chat_id=%s, reply_to=%s, %s more in queue). user_input=%s",
+        "[process_message] processing message (chat_id=%s, reply_to=%s, %s more). input=%s",
         chat_id,
         reply_to_message_id,
         remaining,
         user_input[:80] + "..." if len(user_input) > 80 else user_input,
     )
 
+    key = str(chat_id)
+    conv = ConversationState.from_dict(conversations.get(key, {}))
+
+    # Route to scheduling if already in a scheduling flow or intent detected
+    in_scheduling_flow = conv.mode not in (SchedulingMode.IDLE, SchedulingMode.CANCELLED)
+    if in_scheduling_flow or _is_scheduling_intent(user_input):
+        logger.info("[process_message] scheduling path (mode=%s)", conv.mode.value)
+        _handle_scheduling(conv, user_input, chat_id, reply_to_message_id)
+        conversations[key] = conv.to_dict()
+        return {"pending_messages": pending[1:], "conversations": conversations}
+
+    # Profile Q&A path — RAG + LLM with conversation history
     trace_meta = {
         "chat_id": chat_id,
         "message_id": reply_to_message_id,
@@ -127,54 +353,66 @@ def llm_reply_node(state: AgentState) -> dict:
         metadata=trace_meta,
     ):
         context = _retrieve_context(user_input)
-        logger.info("[llm_reply] retrieved context length=%s chars", len(context))
+        logger.info("[process_message] retrieved context length=%s chars", len(context))
 
         prompt_template = RECRUITER_PROMPT_PATH.read_text(encoding="utf-8")
-        prompt_content = prompt_template.format(context=context, user_input=user_input)
+        chat_history = _format_history(conv.history)
+        prompt_content = prompt_template.format(
+            context=context,
+            user_input=user_input,
+            chat_history=chat_history,
+        )
         with tracing_context(
             enabled=is_langsmith_enabled(),
             project_name=LANGSMITH_PROJECT,
             metadata={
                 "context_length": len(context),
-                # Keep metadata bounded to avoid huge trace payloads.
                 "context_retrieved": context[:6000],
             },
         ):
             try:
                 raw = _call_llm(prompt_content)
                 reply = _strip_reasoning(raw)
-                logger.info("[llm_reply] LLM reply length=%s chars, sending to chat_id=%s", len(reply), chat_id)
+                logger.info("[process_message] LLM reply length=%s chars", len(reply))
             except Exception as e:
                 reply = "Sorry, there was an error. I couldn't process that."
-                logger.exception("[llm_reply] LLM request failed: %s", e)
+                logger.exception("[process_message] LLM request failed: %s", e)
                 if isinstance(
                     e,
                     (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError),
                 ):
                     logger.error(
-                        "[llm_reply] Cannot reach LLM at %s. "
+                        "[process_message] Cannot reach LLM at %s. "
                         "If Ollama is on the host and the app runs in Docker, bind Ollama on all interfaces "
                         "(e.g. set OLLAMA_HOST=0.0.0.0:11434 for the Ollama service, restart Ollama), "
                         "then check on the host: curl -sS http://127.0.0.1:11434/api/tags",
                         LLM_API_URL,
                     )
             _send_telegram(chat_id, reply, reply_to_message_id)
-    return {"pending_messages": pending[1:]}
+
+    conv.add_message("user", user_input)
+    conv.add_message("assistant", reply)
+    conversations[key] = conv.to_dict()
+    return {"pending_messages": pending[1:], "conversations": conversations}
 
 
 def should_continue(state: AgentState) -> str:
-    return "llm_reply" if state.get("pending_messages") else "end"
+    return "process_message" if state.get("pending_messages") else "end"
 
 
 def build_graph():
     graph = StateGraph(AgentState)
     graph.add_node("get_telegram_updates", get_telegram_updates_node)
-    graph.add_node("llm_reply", llm_reply_node)
+    graph.add_node("process_message", process_message_node)
     graph.add_edge(START, "get_telegram_updates")
     graph.add_conditional_edges(
-        "get_telegram_updates", should_continue, {"llm_reply": "llm_reply", "end": END}
+        "get_telegram_updates",
+        should_continue,
+        {"process_message": "process_message", "end": END},
     )
     graph.add_conditional_edges(
-        "llm_reply", should_continue, {"llm_reply": "llm_reply", "end": END}
+        "process_message",
+        should_continue,
+        {"process_message": "process_message", "end": END},
     )
     return graph.compile()

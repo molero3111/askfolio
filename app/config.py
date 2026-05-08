@@ -83,3 +83,16 @@ def is_langsmith_enabled() -> bool:
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 RECRUITER_PROMPT_PATH = PROMPTS_DIR / "recruiter_prompt.txt"
+
+# Google Calendar
+GOOGLE_CREDENTIALS_PATH = _env("GOOGLE_CREDENTIALS_PATH", "credentials.json")
+GOOGLE_TOKEN_PATH = _env("GOOGLE_TOKEN_PATH", "token.json")
+GOOGLE_CALENDAR_ID = _env("GOOGLE_CALENDAR_ID", "primary")
+# Developer's local timezone — used to calculate working hours on the calendar
+CALENDAR_TIMEZONE = _env("CALENDAR_TIMEZONE", "UTC")
+# Timezone shown to recruiters by default in slot labels
+CALENDAR_DISPLAY_TIMEZONE = _env("CALENDAR_DISPLAY_TIMEZONE", "America/New_York")
+CALENDAR_SLOT_DURATION_MINUTES = int(_env("CALENDAR_SLOT_DURATION_MINUTES", "60"))
+CALENDAR_WORKING_HOURS_START = int(_env("CALENDAR_WORKING_HOURS_START", "9"))
+CALENDAR_WORKING_HOURS_END = int(_env("CALENDAR_WORKING_HOURS_END", "18"))
+CALENDAR_DAYS_AHEAD = int(_env("CALENDAR_DAYS_AHEAD", "7"))

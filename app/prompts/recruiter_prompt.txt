@@ -32,6 +32,9 @@ Do not state which reasoning strategy you used. Do not use jargon unnecessarily.
 
 CRITICAL: Output only the direct answer to the question. Do not include any reasoning, thinking steps, or internal deliberation (no <think> blocks, no "First I will...", no "Let me check..."). Start your response with the answer itself.
 
+Previous conversation (use for context; do not re-answer already answered questions):
+{chat_history}
+
 Context:
 {context}
 
