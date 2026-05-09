@@ -83,6 +83,10 @@ def is_langsmith_enabled() -> bool:
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 RECRUITER_PROMPT_PATH = PROMPTS_DIR / "recruiter_prompt.txt"
+TIMEZONE_PROMPT_PATH = PROMPTS_DIR / "timezone_prompt.txt"
+# When true, the alias dict in calendar_client.py acts as a fast-path before the LLM call.
+# Default false: LLM is the primary (sole) resolver for timezone input.
+TIMEZONE_ALIAS_FAST_PATH = _env_bool("TIMEZONE_ALIAS_FAST_PATH", False)
 
 # Google Calendar
 GOOGLE_CREDENTIALS_PATH = _env("GOOGLE_CREDENTIALS_PATH", "credentials.json")

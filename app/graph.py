@@ -20,6 +20,8 @@ from app.config import (
     LLM_MODEL,
     LLM_REQUEST_TIMEOUT,
     RECRUITER_PROMPT_PATH,
+    TIMEZONE_ALIAS_FAST_PATH,
+    TIMEZONE_PROMPT_PATH,
     is_langsmith_enabled,
 )
 from app.conversation import ConversationState, SchedulingMode
@@ -101,6 +103,49 @@ def _call_llm(prompt_content: str) -> str:
 @traceable(name="telegram_send_message", run_type="tool")
 def _send_telegram(chat_id: int, reply: str, reply_to_message_id: int) -> None:
     send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+
+
+_IANA_KEY_RE = re.compile(r"[A-Za-z]+(?:[_/][A-Za-z_]+)+")
+
+
+@traceable(name="resolve_timezone_llm", run_type="llm")
+def _resolve_timezone_llm(text: str) -> str | None:
+    """Use the LLM to map a free-form timezone description to a valid IANA key.
+
+    This is the primary timezone resolver. The alias dict in calendar_client.py
+    acts as an optional fast-path only when TIMEZONE_ALIAS_FAST_PATH=true.
+    Returns None if the LLM cannot determine a valid timezone.
+    """
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    try:
+        prompt = TIMEZONE_PROMPT_PATH.read_text(encoding="utf-8").format(user_input=text)
+        raw = _call_llm(prompt)
+        cleaned = _strip_reasoning(raw).strip()
+        if not cleaned or cleaned.upper() == "UNKNOWN":
+            return None
+        # Primary: use the response verbatim if it's a valid IANA key
+        try:
+            ZoneInfo(cleaned)
+            return cleaned
+        except ZoneInfoNotFoundError:
+            pass
+        # Fallback: some models prepend prose — scan for the first Region/City token
+        match = _IANA_KEY_RE.search(cleaned)
+        if match:
+            candidate = match.group(0)
+            try:
+                ZoneInfo(candidate)
+                return candidate
+            except ZoneInfoNotFoundError:
+                pass
+        logger.warning("[timezone_llm] LLM response not a valid IANA key for input=%r: %r", text, cleaned)
+        return None
+    except requests.exceptions.RequestException:
+        logger.exception("[timezone_llm] LLM request failed for input=%r", text)
+        return None
+    except Exception:
+        logger.exception("[timezone_llm] unexpected error resolving tz for input=%r", text)
+        return None
 
 
 def _tz_display_name(iana_key: str) -> str:
@@ -199,7 +244,8 @@ def _handle_scheduling(
                 return
 
         # No valid number — check if it's a timezone change request
-        resolved_tz = resolve_timezone(user_input)
+        # Alias fast-path is optional (TIMEZONE_ALIAS_FAST_PATH=true); LLM is primary
+        resolved_tz = (resolve_timezone(user_input) if TIMEZONE_ALIAS_FAST_PATH else None) or _resolve_timezone_llm(user_input)
         if resolved_tz:
             from zoneinfo import ZoneInfo
             conv.recruiter_display_tz = resolved_tz
@@ -219,9 +265,11 @@ def _handle_scheduling(
             return
 
         slot_count = len(conv.proposed_slots)
+        default_label = _tz_display_name(CALENDAR_DISPLAY_TIMEZONE)
         reply = (
-            f"Please reply with a number between 1 and {slot_count} to select your preferred slot, "
-            "or tell me a timezone if you'd like the times converted."
+            f"I couldn't determine that timezone. Times are shown in {default_label}.\n\n"
+            f"Please reply with a number between 1 and {slot_count} to select your slot, "
+            "or try a different timezone (e.g. \"Pacific Time\", \"London\", \"Asia/Tokyo\")."
         )
         _send_telegram(chat_id, reply, message_id)
         conv.add_message("user", user_input)
