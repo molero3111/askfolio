@@ -142,8 +142,10 @@ _TZ_ALIASES: dict[str, str] = {
 
 
 def resolve_timezone(text: str) -> str | None:
-    """
-    Try to map a fuzzy timezone string to a valid IANA key.
+    """Map a fuzzy timezone string to a valid IANA key using the alias dict.
+
+    The LLM (_resolve_timezone_llm in graph.py) is the primary resolver by default.
+    This function acts as an optional fast-path only when TIMEZONE_ALIAS_FAST_PATH=true.
     Tries: alias map (whole phrase, then word-by-word), then direct ZoneInfo lookup.
     Returns None if nothing matches.
     """
