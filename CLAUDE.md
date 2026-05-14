@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-**askfolio** — a Telegram bot that answers recruiter questions about Emmanuel's developer profile using RAG (retrieval-augmented generation) and can schedule Google Calendar meetings. It runs as a long-polling loop driven by a LangGraph `StateGraph`.
+**askfolio** — a Telegram bot that answers recruiter questions about a developer's profile using RAG (retrieval-augmented generation) and can schedule Google Calendar meetings. It runs as a long-polling loop driven by a LangGraph `StateGraph`.
 
 ## Running the bot
 
@@ -93,7 +93,7 @@ The LLM is called via plain HTTP (`requests.post`) to an OpenAI-compatible `/v1/
 
 ## Timezone notes
 
-`CALENDAR_TIMEZONE` = where Emmanuel is (used to compute which hours are "working hours").  
+`CALENDAR_TIMEZONE` = where developer is (used to compute which hours are "working hours").  
 `CALENDAR_DISPLAY_TIMEZONE` = what recruiters see in slot labels (independent).  
 `resolve_timezone(text)` in `calendar_client.py` maps fuzzy user input ("Pacific Time", "CET", "Tokyo") to IANA keys via `_TZ_ALIASES` dict, with direct `ZoneInfo` fallback.  
 Docker requires the `tzdata` package (included in `requirements.txt`) since `python:3.11-slim` has no system tz data.
@@ -103,3 +103,7 @@ Docker requires the `tzdata` package (included in `requirements.txt`) since `pyt
 `ingest_pgvector.py` reads two JSON sources configured by `INGEST_KNOWLEDGE_JSON` and `INGEST_GITHUB_JSON`.  
 Default mode: deletes all rows in the collection, then re-inserts. Use `--append` to keep existing vectors.  
 Embedding model: `sentence-transformers/all-MiniLM-L6-v2` (384-dim). Changing `VECTOR_SIZE` requires `--reinstall`.
+
+## README.md
+
+Please read if you need more info: @README.md
