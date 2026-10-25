@@ -400,7 +400,11 @@ def get_telegram_updates_node(state: AgentState) -> dict:
 
 
 def process_message_node(state: AgentState) -> dict:
-    """Node: process the first pending message — scheduling state machine or LLM Q&A."""
+    """Node: process the first pending message — scheduling state machine or LLM Q&A.
+
+    A crash while handling one message must not drop the rest of the batch: the offset
+    on disk is already past the whole batch, so log it, apologise, and move on.
+    """
     heartbeat.touch()
     pending = list(state.get("pending_messages") or [])
     if not pending:
@@ -408,6 +412,20 @@ def process_message_node(state: AgentState) -> dict:
         return {"pending_messages": []}
 
     conversations: dict = dict(state.get("conversations") or {})
+    chat_id, reply_to_message_id, _ = pending[0]
+    try:
+        return _process_first(pending, conversations)
+    except Exception:
+        logger.exception(
+            "[process_message] failed (chat_id=%s, message_id=%s); skipping message",
+            chat_id,
+            reply_to_message_id,
+        )
+        _send_telegram(chat_id, ERROR_REPLY, reply_to_message_id)
+        return {"pending_messages": pending[1:], "conversations": conversations}
+
+
+def _process_first(pending: list, conversations: dict) -> dict:
     chat_id, reply_to_message_id, user_input = pending[0]
     remaining = len(pending) - 1
     logger.info(
