@@ -38,9 +38,12 @@ The ingest pipeline turns each logical block into documents with metadata so sea
 
 ```bash
 cp .env.example .env
+mkdir -p secrets data          # must exist before the first `docker compose up`, or Docker creates them owned by root
 ```
 
-Set `TELEGRAM_BOT_TOKEN` in `.env` (create a bot via [@BotFather](https://t.me/BotFather)).
+Set `TELEGRAM_BOT_TOKEN` in `.env` (create a bot via [@BotFather](https://t.me/BotFather)), and set `POSTGRES_PASSWORD`. Compose refuses to start until it's set.
+
+The app container runs as your host user, so it can write to `secrets/` (Google token refresh) and `data/` (Telegram offset). Compose reads `UID`/`GID` from the environment and falls back to `1000:1000`. If your user isn't uid 1000, run `export UID GID` first, or add `UID=` and `GID=` to `.env`.
 
 ### 2. Prepare JSON
 
@@ -293,7 +296,7 @@ Full list: [Wikipedia — tz database time zones](https://en.wikipedia.org/wiki/
 └── Dockerfile
 ```
 
-The database uses the **official [pgvector/pgvector](https://hub.docker.com/r/pgvector/pgvector)** image (`pg15`).
+The database uses the **official [pgvector/pgvector](https://hub.docker.com/r/pgvector/pgvector)** image (`pg17`). Upgrading from an older setup on `pg15`: the dev stack uses a new volume (`askfolio_pg17_data`), so run the ingest again after the first `docker compose up`.
 
 ## Running without Docker
 

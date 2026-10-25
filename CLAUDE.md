@@ -19,7 +19,7 @@ docker compose exec app-askfolio python ingest/ingest_pgvector.py
 docker compose exec app-askfolio python ingest/ingest_pgvector.py --reinstall
 
 # Run bot directly (requires .env and a running Postgres)
-python main.py
+uv run python main.py
 ```
 
 ### One-time Google Calendar setup
