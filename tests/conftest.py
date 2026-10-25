@@ -4,7 +4,7 @@ import os
 # .env is never loaded into the test process.
 os.environ["ASKFOLIO_SKIP_DOTENV"] = "1"
 
-import pytest  # noqa: E402
+import pytest
 
 
 @pytest.fixture(autouse=True)
