@@ -27,9 +27,9 @@ from app.config import (
     is_langsmith_enabled,
 )
 from app.conversation import ConversationState, SchedulingMode
-from app.llm_client import LLMCreditExhausted, LLMError, LLMResult, chat  # noqa: F401
+from app.llm_client import LLMCreditExhausted, LLMError, LLMResult, LLMUnavailable, chat  # noqa: F401
 from app.llm_messages import build_qa_messages, build_timezone_messages
-from app.observability import traceable, tracing_context
+from app.observability import is_langsmith_exception, traceable, tracing_context
 from app.offset import save_offset
 from app.rag import get_relevant_context
 from app.rate_limit import Decision, MessageLimiter
@@ -178,13 +178,13 @@ def _resolve_timezone_llm(text: str) -> str | None:
                 return candidate
             except ZoneInfoNotFoundError:
                 pass
-        logger.warning("[timezone_llm] LLM response not a valid IANA key for input=%r: %r", text, cleaned)
+        logger.warning("[timezone_llm] LLM response not a valid IANA key (input len=%s)", len(text))
         return None
     except LLMError:
-        logger.exception("[timezone_llm] LLM request failed for input=%r", text)
+        logger.exception("[timezone_llm] LLM request failed (input len=%s)", len(text))
         return None
     except Exception:
-        logger.exception("[timezone_llm] unexpected error resolving tz for input=%r", text)
+        logger.exception("[timezone_llm] unexpected error resolving tz (input len=%s)", len(text))
         return None
 
 
@@ -427,7 +427,10 @@ def process_message_node(state: AgentState) -> dict:
     chat_id, reply_to_message_id, _ = pending[0]
     try:
         return _process_first(pending, conversations)
-    except Exception:
+    except Exception as exc:
+        if is_langsmith_exception(exc):
+            # Let run_once see it and switch tracing off instead of failing every Q&A.
+            raise
         logger.exception(
             "[process_message] failed (chat_id=%s, message_id=%s); skipping message",
             chat_id,
@@ -500,9 +503,9 @@ def _process_first(pending: list, conversations: dict) -> dict:
                     logger.warning("[process_message] LLM reply empty after stripping reasoning")
                     reply = ERROR_REPLY
                 logger.info("[process_message] LLM reply length=%s chars", len(reply))
-            except LLMCreditExhausted:
+            except (LLMCreditExhausted, LLMUnavailable) as e:
                 reply = UNAVAILABLE_REPLY
-                logger.error("[process_message] LLM credit limit reached")
+                logger.error("[process_message] LLM unavailable: %s", e)
             except Exception as e:
                 reply = ERROR_REPLY
                 logger.exception("[process_message] LLM request failed: %s", e)

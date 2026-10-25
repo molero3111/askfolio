@@ -2,7 +2,6 @@
 import logging
 import os
 import time
-import traceback
 
 from dotenv import load_dotenv
 
@@ -22,6 +21,7 @@ from app.config import (
 )
 from app.graph import build_graph
 from app.log_redact import install_excepthook, install_redaction
+from app.observability import is_langsmith_exception
 from app.offset import load_offset, save_offset
 from app.rag import get_vectorstore
 
@@ -47,18 +47,6 @@ logging.basicConfig(
 install_redaction([TELEGRAM_BOT_TOKEN, LLM_API_KEY, LANGSMITH_API_KEY])
 install_excepthook()
 logging.captureWarnings(True)  # route warnings.warn through the filtered handlers
-
-
-def _is_langsmith_exception(exc: BaseException) -> bool:
-    """Best-effort detection for tracing backend/runtime errors."""
-    stack = traceback.format_exception(type(exc), exc, exc.__traceback__)
-    text = "".join(stack).lower()
-    if "langsmith" in text or "smith.langchain.com" in text:
-        return True
-    cause = exc.__cause__ or exc.__context__
-    if cause is None:
-        return False
-    return _is_langsmith_exception(cause)
 
 
 def startup() -> None:
@@ -91,7 +79,7 @@ def run_once(graph, state: dict, sleep=time.sleep) -> dict:
     try:
         new_state = graph.invoke(state)
     except Exception as exc:
-        if _is_langsmith_exception(exc):
+        if is_langsmith_exception(exc):
             logger.warning(
                 "LangSmith tracing error detected; disabling tracing and continuing. Error: %s",
                 exc,
