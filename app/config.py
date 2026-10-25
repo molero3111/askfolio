@@ -29,7 +29,7 @@ def _postgres_dsn() -> str:
 
 TELEGRAM_BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN")
 # File to persist last Telegram update_id (so we send offset on next getUpdates and after restart)
-TELEGRAM_OFFSET_FILE = _env("TELEGRAM_OFFSET_FILE", "telegram_offset.txt")
+TELEGRAM_OFFSET_FILE = _env("TELEGRAM_OFFSET_FILE", "data/telegram_offset.txt")
 LLM_API_URL = _env(
     "LLM_API_URL",
     "http://host.docker.internal:11434/v1/chat/completions",
@@ -89,8 +89,8 @@ TIMEZONE_PROMPT_PATH = PROMPTS_DIR / "timezone_prompt.txt"
 TIMEZONE_ALIAS_FAST_PATH = _env_bool("TIMEZONE_ALIAS_FAST_PATH", False)
 
 # Google Calendar
-GOOGLE_CREDENTIALS_PATH = _env("GOOGLE_CREDENTIALS_PATH", "credentials.json")
-GOOGLE_TOKEN_PATH = _env("GOOGLE_TOKEN_PATH", "token.json")
+GOOGLE_CREDENTIALS_PATH = _env("GOOGLE_CREDENTIALS_PATH", "secrets/credentials.json")
+GOOGLE_TOKEN_PATH = _env("GOOGLE_TOKEN_PATH", "secrets/token.json")
 GOOGLE_CALENDAR_ID = _env("GOOGLE_CALENDAR_ID", "primary")
 # Developer's local timezone — used to calculate working hours on the calendar
 CALENDAR_TIMEZONE = _env("CALENDAR_TIMEZONE", "UTC")
