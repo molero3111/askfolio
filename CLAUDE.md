@@ -9,7 +9,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Running the bot
 
 ```bash
-# Start Postgres (pgvector) + the bot
+# First run, in this order (the app crash-loops if the table doesn't exist yet)
+docker compose up -d db-askfolio
+docker compose run --rm app-askfolio python -m ingest.migrate
+docker compose run --rm app-askfolio python ingest/ingest_pgvector.py
 docker compose up -d
 
 # Ingest/refresh the knowledge base into pgvector (run after changing cv.json or github_projects.json)
@@ -45,11 +48,30 @@ app/calendar_client.py — Google Calendar freebusy query, slot formatting, meet
 app/rag.py            — pgvector similarity search via langchain-postgres
 app/telegram_client.py — send_message / get_updates wrappers
 app/observability.py  — optional LangSmith tracing decorators (no-op when key absent)
-app/config.py         — all env var reads; import config values from here, never os.environ directly
+app/config.py         — all env var reads (also loads .env unless ASKFOLIO_SKIP_DOTENV); import config values from here, never os.environ directly. Only healthcheck.py and heartbeat.py read env themselves
+app/llm_client.py     — OpenRouter-aware chat completions client with fallback models and typed errors
+app/llm_messages.py   — builds the Q&A/timezone message lists; sanitizes input; fills {scheduling_hint} from BOOKING_ENABLED
+app/rate_limit.py     — in-memory MessageLimiter / BookingLimiter
+app/heartbeat.py      — touches HEARTBEAT_FILE each cycle (stdlib only)
+app/healthcheck.py    — `python -m app.healthcheck`: exit 0 if the heartbeat is fresh (container healthcheck)
+app/log_redact.py     — logging filter and excepthook that keep secrets out of logs
+app/offset.py         — load/save the Telegram update offset
+app/secure_io.py      — atomic owner-only file writes
+app/text_normalize.py — folds look-alike/invisible/encoded text before sanitizing or scrubbing
 
 ingest/
   ├─ ingest_pgvector.py    — CLI: load JSON → chunk → embed → upsert into pgvector
-  └─ json_to_documents.py  — document builders for cv.json and github_projects.json
+  ├─ json_to_documents.py  — document builders for cv.json and github_projects.json
+  ├─ migrate.py            — `python -m ingest.migrate`: idempotent pgvector extension + table setup
+  └─ scrub.py              — strips emails and phone numbers from documents before embedding
+
+scripts/
+  ├─ check_index_pii.py    — fails if the owner's email/phone is still in the vector table
+  ├─ privacy_scan.py       — CI: fails if a tracked file contains a PRIVACY_DENYLIST term
+  └─ check_image.sh        — CI: asserts the built image has no secrets and runs non-root
+
+deploy/compose.yml         — production stack: GHCR image, ASKFOLIO_* host paths, read-only hardened app
+.github/workflows/         — ci.yml (lint, tests, privacy scan, image check) and deploy.yml (build, push, deploy)
 
 resources/json/
   ├─ cv.json               — knowledge base (skills, experience, education)
@@ -60,9 +82,9 @@ app/prompts/system_prompt.txt + user_prompt.txt (user: {chat_history}, {context}
 
 ### Message routing in `process_message_node`
 
-1. Keyword-match checks `_SCHEDULING_KEYWORDS` / `_CANCEL_KEYWORDS` (frozensets in `graph.py`).
-2. If `conv.mode != IDLE` or scheduling intent detected → `_handle_scheduling()` state machine.
-3. Otherwise → RAG retrieval (`get_relevant_context`) + LLM HTTP call → Telegram reply.
+1. Keyword-match checks `_SCHEDULING_KEYWORDS` / `_CANCEL_KEYWORDS` (frozensets in `graph.py`). Scheduling keywords only count when `BOOKING_ENABLED` is true (default false); with booking off every message goes to Q&A.
+2. If `conv.mode != IDLE`, or booking is on and scheduling intent is detected → `_handle_scheduling()` state machine. Starting a flow from idle passes the `MessageLimiter` first; replies inside a flow are not limited.
+3. Otherwise → `MessageLimiter` check (per-chat/minute, per-chat/day, global/day; one notice, then silent) → RAG retrieval (`get_relevant_context`) + LLM HTTP call → Telegram reply.
 
 ### Scheduling state machine (`SchedulingMode`)
 
@@ -83,7 +105,10 @@ Critical vars:
 | Var | Purpose |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Required; bot will not start without it |
-| `LLM_API_URL` / `LLM_MODEL` | OpenAI-compatible endpoint (default: Ollama on host) |
+| `LLM_API_URL` / `LLM_MODEL` | OpenAI-compatible endpoint (default: OpenRouter); `LLM_MODEL` is required |
+| `LLM_FALLBACK_MODELS` / `LLM_API_KEY` | Fallback model IDs tried in order; provider API key |
+| `BOOKING_ENABLED` | Master switch for scheduling (default `false`) |
+| `RATE_LIMIT_*` | In-memory per-chat, global and booking caps |
 | `POSTGRES_*` | DSN built in `config._postgres_dsn()` |
 | `CALENDAR_TIMEZONE` | Developer's IANA tz for working-hours computation |
 | `CALENDAR_DISPLAY_TIMEZONE` | Timezone shown to recruiters (default `America/New_York`) |
