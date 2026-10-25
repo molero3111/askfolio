@@ -34,6 +34,7 @@ from app.offset import save_offset
 from app.rag import get_relevant_context
 from app.rate_limit import Decision, MessageLimiter
 from app.telegram_client import TelegramError, get_updates, send_message
+from app.text_format import to_plain_text
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +142,7 @@ def _call_llm(messages: list[dict]) -> str:
 @traceable(name="telegram_send_message", run_type="tool")
 def _send_telegram(chat_id: int, reply: str, reply_to_message_id: int) -> None:
     try:
-        send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+        send_message(chat_id, to_plain_text(reply), reply_to_message_id=reply_to_message_id)
     except (requests.RequestException, TelegramError) as exc:
         logger.warning("[telegram] sendMessage failed (chat_id=%s): %s", chat_id, exc)
 
@@ -499,7 +500,7 @@ def _process_first(pending: list, conversations: dict) -> dict:
         ):
             try:
                 raw = _call_llm(messages)
-                reply = _strip_reasoning(raw)
+                reply = to_plain_text(_strip_reasoning(raw))
                 if not reply:
                     logger.warning("[process_message] LLM reply empty after stripping reasoning")
                     reply = ERROR_REPLY
