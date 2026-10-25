@@ -82,3 +82,46 @@ def test_main_not_required_and_empty_is_notice(monkeypatch, capsys):
     monkeypatch.setenv("REQUIRE_DENYLIST", "false")
     assert main() == 0
     assert "::notice::" in capsys.readouterr().out
+
+
+def test_scan_digits_only_match(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_text("hello\ncall 991234567890\n(12) 3456-7890 ext\n1234567890 only\n99 12 345\n9991234\n")
+    hits = scan([f], ["+99 12 3456 7890"])
+    assert (str(f), 2) in hits
+    assert (str(f), 3) in hits  # national part without the country code
+    assert (str(f), 1) not in hits
+    assert (str(f), 6) not in hits
+    assert (str(f), 5) not in hits
+
+
+def test_scan_digits_only_catches_formatted_lines(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_text("tel: +99 (12) 3456-7890\n")
+    assert scan([f], ["+99 12 3456 7890"]) == [(str(f), 1)]
+
+
+def test_scan_digits_only_not_for_mostly_text_terms(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_text("room 1234567\n")
+    # term is mostly letters, so digit-only matching must not apply
+    assert scan([f], ["abc 1234567 abcdefghij"]) == []
+
+
+def test_scan_nfkc_and_casefold(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_text("fullwidth Ｊａｎｅ here\nStraße\n")
+    assert scan([f], ["jane"]) == [(str(f), 1)]
+    assert scan([f], ["STRASSE"]) == [(str(f), 2)]
+
+
+def test_scan_reads_undecodable_but_not_binary(tmp_path):
+    f = tmp_path / "latin.txt"
+    f.write_bytes(b"caf\xe9 secret-term\n")
+    assert scan([f], ["secret-term"]) == [(str(f), 1)]
+
+
+def test_scan_skips_nul_in_first_8kb(tmp_path):
+    f = tmp_path / "bin.dat"
+    f.write_bytes(b"secret-term\n\x00" + b"a" * 100)
+    assert scan([f], ["secret-term"]) == []
