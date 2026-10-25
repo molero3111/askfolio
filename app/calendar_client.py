@@ -1,6 +1,5 @@
 import logging
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from google.auth.transport.requests import Request
@@ -16,7 +15,9 @@ from app.config import (
     CALENDAR_WORKING_HOURS_START,
     GOOGLE_CALENDAR_ID,
     GOOGLE_TOKEN_PATH,
+    resolve_path,
 )
+from app.secure_io import atomic_write_secret
 
 logger = logging.getLogger(__name__)
 
@@ -184,11 +185,11 @@ def format_slot_label(slot_start_iso: str, display_tz: ZoneInfo) -> str:
 
 
 def is_calendar_configured() -> bool:
-    return Path(GOOGLE_TOKEN_PATH).exists()
+    return resolve_path(GOOGLE_TOKEN_PATH).exists()
 
 
 def _get_credentials() -> Credentials:
-    token_path = Path(GOOGLE_TOKEN_PATH)
+    token_path = resolve_path(GOOGLE_TOKEN_PATH)
     creds = None
 
     if token_path.exists():
@@ -197,7 +198,10 @@ def _get_credentials() -> Credentials:
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            token_path.write_text(creds.to_json())
+            try:
+                atomic_write_secret(token_path, creds.to_json())
+            except OSError:
+                logger.warning("Could not save refreshed token to %s", token_path, exc_info=True)
         else:
             raise RuntimeError(
                 f"Google Calendar token not found at {token_path}. "
@@ -227,7 +231,7 @@ def get_available_slots(display_tz_key: str | None = None) -> list[dict]:
 
     display_tz = ZoneInfo(display_tz_key or CALENDAR_DISPLAY_TIMEZONE)
     duration = timedelta(minutes=CALENDAR_SLOT_DURATION_MINUTES)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Start from tomorrow so the recruiter isn't pressured into same-day booking
     start = (now + timedelta(days=1)).astimezone(dev_tz).replace(
@@ -240,8 +244,8 @@ def get_available_slots(display_tz_key: str | None = None) -> list[dict]:
         .freebusy()
         .query(
             body={
-                "timeMin": start.astimezone(timezone.utc).isoformat(),
-                "timeMax": end.astimezone(timezone.utc).isoformat(),
+                "timeMin": start.astimezone(UTC).isoformat(),
+                "timeMax": end.astimezone(UTC).isoformat(),
                 "items": [{"id": GOOGLE_CALENDAR_ID}],
             }
         )
@@ -259,7 +263,7 @@ def get_available_slots(display_tz_key: str | None = None) -> list[dict]:
     slots: list[dict] = []
     cursor = start
 
-    while cursor.astimezone(timezone.utc) < end.astimezone(timezone.utc) and len(slots) < 6:
+    while cursor.astimezone(UTC) < end.astimezone(UTC) and len(slots) < 6:
         if cursor.weekday() >= 5:
             cursor = (cursor + timedelta(days=1)).replace(
                 hour=CALENDAR_WORKING_HOURS_START, minute=0, second=0, microsecond=0
@@ -281,8 +285,8 @@ def get_available_slots(display_tz_key: str | None = None) -> list[dict]:
             )
             continue
 
-        cursor_utc = cursor.astimezone(timezone.utc)
-        slot_end_utc = slot_end.astimezone(timezone.utc)
+        cursor_utc = cursor.astimezone(UTC)
+        slot_end_utc = slot_end.astimezone(UTC)
 
         if not any(b_start < slot_end_utc and b_end > cursor_utc for b_start, b_end in busy):
             slots.append(

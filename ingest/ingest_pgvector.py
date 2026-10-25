@@ -13,8 +13,8 @@ from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
 import sqlalchemy
-from langchain_postgres import PGEngine, PGVectorStore
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_postgres import PGEngine, PGVectorStore
 
 from app.config import (
     CHUNK_OVERLAP,

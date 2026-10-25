@@ -3,7 +3,6 @@ import logging
 import os
 import time
 import traceback
-from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -17,9 +16,9 @@ from app.config import (
     LANGSMITH_RUNTIME_FLAG,
     POLL_INTERVAL_SECONDS,
     TELEGRAM_BOT_TOKEN,
-    TELEGRAM_OFFSET_FILE,
 )
 from app.graph import build_graph
+from app.offset import load_offset, save_offset
 
 if LANGSMITH_ENABLED:
     # Disable global auto-tracing (LangGraph node-level noise on empty polls).
@@ -52,30 +51,6 @@ def _is_langsmith_exception(exc: BaseException) -> bool:
     return _is_langsmith_exception(cause)
 
 
-def _offset_path() -> Path:
-    p = Path(TELEGRAM_OFFSET_FILE)
-    return p if p.is_absolute() else Path.cwd() / p
-
-
-def _load_offset() -> int | None:
-    path = _offset_path()
-    if not path.exists():
-        return None
-    try:
-        raw = path.read_text().strip()
-        return int(raw) if raw else None
-    except (ValueError, OSError):
-        return None
-
-
-def _save_offset(offset: int) -> None:
-    path = _offset_path()
-    try:
-        path.write_text(str(offset))
-    except OSError:
-        logging.getLogger(__name__).warning("Could not save offset to %s", path)
-
-
 def main():
     logger = logging.getLogger(__name__)
     logger.info(
@@ -86,7 +61,7 @@ def main():
     if not TELEGRAM_BOT_TOKEN:
         raise SystemExit("Set TELEGRAM_BOT_TOKEN in .env")
     graph = build_graph()
-    state: dict = {"offset": _load_offset(), "pending_messages": [], "conversations": {}}
+    state: dict = {"offset": load_offset(), "pending_messages": [], "conversations": {}}
     while True:
         try:
             state = graph.invoke(state)
@@ -100,7 +75,7 @@ def main():
                 continue
             raise
         if state.get("offset") is not None:
-            _save_offset(state["offset"])
+            save_offset(state["offset"])
         time.sleep(POLL_INTERVAL_SECONDS)
 
 

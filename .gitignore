@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 telegram_offset.txt
 venv/
 __pycache__/
@@ -13,3 +15,9 @@ resources/pdfs/*.pdf
 resources/json/*.json
 credentials.json
 token.json
+.venv/
+secrets/
+data/
+evals/results/
+evals/golden*.yaml
+!evals/golden.example.yaml

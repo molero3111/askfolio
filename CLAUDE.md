@@ -19,15 +19,15 @@ docker compose exec app-askfolio python ingest/ingest_pgvector.py
 docker compose exec app-askfolio python ingest/ingest_pgvector.py --reinstall
 
 # Run bot directly (requires .env and a running Postgres)
-python main.py
+uv run python main.py
 ```
 
 ### One-time Google Calendar setup
 
 ```bash
 # Run locally (opens browser for OAuth — must NOT run inside Docker)
-python scripts/authorize_calendar.py
-# Generates token.json in project root; Docker reads it via the . :/app volume mount
+uv run python scripts/authorize_calendar.py
+# Generates secrets/token.json; Docker reads it via the ./secrets:/app/secrets volume mount
 ```
 
 ## Architecture
@@ -73,7 +73,7 @@ Any cancel-keyword input at any step → `CANCELLED` → back to `IDLE`.
 
 `AgentState` (TypedDict) is carried between LangGraph invocations in a plain `dict`.  
 `conversations: dict` maps `str(chat_id)` → `ConversationState.to_dict()` for per-chat memory (10-message sliding window).  
-`offset: int | None` is saved to `telegram_offset.txt` between restarts.
+`offset: int | None` is saved to `data/telegram_offset.txt` between restarts.
 
 ## Key configuration
 
@@ -96,7 +96,7 @@ The LLM is called via plain HTTP (`requests.post`) to an OpenAI-compatible `/v1/
 `CALENDAR_TIMEZONE` = where developer is (used to compute which hours are "working hours").  
 `CALENDAR_DISPLAY_TIMEZONE` = what recruiters see in slot labels (independent).  
 `resolve_timezone(text)` in `calendar_client.py` maps fuzzy user input ("Pacific Time", "CET", "Tokyo") to IANA keys via `_TZ_ALIASES` dict, with direct `ZoneInfo` fallback.  
-Docker requires the `tzdata` package (included in `requirements.txt`) since `python:3.11-slim` has no system tz data.
+Docker requires the `tzdata` package (a dependency in `pyproject.toml`) since `python:3.14-slim` has no system tz data.
 
 ## Ingest details
 
