@@ -4,6 +4,7 @@ Matched terms are never printed; only ``path:line`` locations are reported.
 """
 
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Iterable
@@ -36,8 +37,12 @@ def tracked_files() -> list[Path]:
 
 
 def main() -> int:
-    terms = [t.strip() for t in os.environ.get("PRIVACY_DENYLIST", "").splitlines()]
+    raw = os.environ.get("PRIVACY_DENYLIST", "")
+    terms = [t.strip() for t in re.split(r"[,\r\n]+", raw)]
     terms = [t for t in terms if t]
+    if raw and not terms:
+        print("::error::PRIVACY_DENYLIST is set but contains no usable terms")
+        return 2
     if not terms:
         print("::notice::PRIVACY_DENYLIST not set; privacy scan skipped")
         return 0
