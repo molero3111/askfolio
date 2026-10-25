@@ -30,7 +30,7 @@ def test_removes_contacts(src):
         "2015 - 2020",
         "Jan 2023 – Mar 2024",
         "2023-01-15",
-        "https://www.udemy.com/certificate/UC-ad904fa5-36b2-4c03-aa30-3524904a63ab/",
+        "https://www.udemy.com/certificate/UC-12345678-0000-1111-2222-333344445555/",
         "https://github.com/janedoe/repo",
         "github: janedoe",
         "v1.2.3",
