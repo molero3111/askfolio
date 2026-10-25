@@ -1,16 +1,18 @@
-from unittest.mock import MagicMock, patch
-
 from app import graph
+from app.llm_client import LLMResult
 
 
-def test_call_llm_sends_messages_unchanged():
+def test_call_llm_sends_messages_unchanged(monkeypatch):
     messages = [
         {"role": "system", "content": "SYS"},
         {"role": "user", "content": "USR"},
     ]
-    resp = MagicMock()
-    resp.json.return_value = {"choices": [{"message": {"content": "  hi  "}}]}
-    with patch.object(graph.requests, "post", return_value=resp) as post:
-        out = graph._call_llm(messages)
-    assert out == "hi"
-    assert post.call_args.kwargs["json"]["messages"] == messages
+    seen = {}
+
+    def fake_chat(msgs):
+        seen["messages"] = msgs
+        return LLMResult("hi", "m", 1, 1, None, 0.1)
+
+    monkeypatch.setattr(graph, "chat", fake_chat)
+    assert graph._call_llm(messages) == "hi"
+    assert seen["messages"] == messages

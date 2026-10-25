@@ -38,14 +38,19 @@ def _postgres_dsn() -> str:
 TELEGRAM_BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN")
 # File to persist last Telegram update_id (so we send offset on next getUpdates and after restart)
 TELEGRAM_OFFSET_FILE = _env("TELEGRAM_OFFSET_FILE", "data/telegram_offset.txt")
-LLM_API_URL = _env(
-    "LLM_API_URL",
-    "http://host.docker.internal:11434/v1/chat/completions",
-)
-LLM_MODEL = _env("LLM_MODEL", "local-model")
+LLM_API_URL = _env("LLM_API_URL", "https://openrouter.ai/api/v1/chat/completions")
+# No default: set LLM_MODEL in .env (main.py exits when empty)
+LLM_MODEL = _env("LLM_MODEL", "")
+# Comma-separated OpenRouter model IDs tried in order if the primary fails
+LLM_FALLBACK_MODELS = [m.strip() for m in _env("LLM_FALLBACK_MODELS", "").split(",") if m.strip()]
 LLM_API_KEY = _env("LLM_API_KEY", "")
-# Timeout in seconds for the HTTP request to the LLM API (default 600 = 10 min for slow local models)
-LLM_REQUEST_TIMEOUT = int(_env("LLM_REQUEST_TIMEOUT", "600"))
+# Timeout in seconds for the HTTP request to the LLM API
+LLM_REQUEST_TIMEOUT = int(_env("LLM_REQUEST_TIMEOUT", "60"))
+LLM_MAX_TOKENS = int(_env("LLM_MAX_TOKENS", "800"))
+# OpenRouter provider.data_collection: "deny" refuses providers that may train on prompts
+LLM_DATA_COLLECTION = _env("LLM_DATA_COLLECTION", "deny")
+LLM_APP_URL = _env("LLM_APP_URL", "")
+LLM_APP_NAME = _env("LLM_APP_NAME", "askfolio")
 DB_CONNECTION_URL = _postgres_dsn()
 # PGEngine uses async SQLAlchemy; it requires postgresql+asyncpg:// (asyncpg driver)
 DB_CONNECTION_URL_ASYNC = (
@@ -71,7 +76,7 @@ INGEST_GITHUB_JSON = _env(
 # How many vector chunks to retrieve per question (higher = more repos/context; default 20)
 RAG_TOP_K = int(_env("RAG_TOP_K", "20"))
 # Seconds to sleep after each poll cycle (getUpdates is long-polling with timeout; this is extra delay between cycles)
-POLL_INTERVAL_SECONDS = int(_env("POLL_INTERVAL_SECONDS", "300"))  # 5 minutes
+POLL_INTERVAL_SECONDS = int(_env("POLL_INTERVAL_SECONDS", "0"))
 # getUpdates long-poll timeout (request blocks up to this many seconds for new updates)
 GET_UPDATES_TIMEOUT = int(_env("GET_UPDATES_TIMEOUT", "60"))
 
@@ -110,3 +115,13 @@ CALENDAR_SLOT_DURATION_MINUTES = int(_env("CALENDAR_SLOT_DURATION_MINUTES", "60"
 CALENDAR_WORKING_HOURS_START = int(_env("CALENDAR_WORKING_HOURS_START", "9"))
 CALENDAR_WORKING_HOURS_END = int(_env("CALENDAR_WORKING_HOURS_END", "18"))
 CALENDAR_DAYS_AHEAD = int(_env("CALENDAR_DAYS_AHEAD", "7"))
+
+# Rate limiting (in-memory). The global daily limit must stay below the OpenRouter
+# free-model daily cap (50 requests/day) so the bot's own limit triggers first.
+RATE_LIMIT_PER_CHAT_PER_MINUTE = int(_env("RATE_LIMIT_PER_CHAT_PER_MINUTE", "5"))
+RATE_LIMIT_PER_CHAT_PER_DAY = int(_env("RATE_LIMIT_PER_CHAT_PER_DAY", "50"))
+RATE_LIMIT_GLOBAL_PER_DAY = int(_env("RATE_LIMIT_GLOBAL_PER_DAY", "45"))
+RATE_LIMIT_BOOKINGS_PER_CHAT_PER_DAY = int(_env("RATE_LIMIT_BOOKINGS_PER_CHAT_PER_DAY", "1"))
+RATE_LIMIT_BOOKINGS_GLOBAL_PER_DAY = int(_env("RATE_LIMIT_BOOKINGS_GLOBAL_PER_DAY", "5"))
+# Master switch for meeting booking (the MVP .env.example ships it disabled)
+BOOKING_ENABLED = _env_bool("BOOKING_ENABLED", False)

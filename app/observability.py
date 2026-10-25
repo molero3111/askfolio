@@ -1,3 +1,4 @@
+import traceback
 from collections.abc import Callable
 from contextlib import contextmanager
 from typing import Any
@@ -27,3 +28,15 @@ def tracing_context(**kwargs: Any):
         return
     with _tracing_context(**kwargs):
         yield
+
+
+def is_langsmith_exception(exc: BaseException) -> bool:
+    """Best-effort detection for tracing backend/runtime errors."""
+    stack = traceback.format_exception(type(exc), exc, exc.__traceback__)
+    text = "".join(stack).lower()
+    if "langsmith" in text or "smith.langchain.com" in text:
+        return True
+    cause = exc.__cause__ or exc.__context__
+    if cause is None:
+        return False
+    return is_langsmith_exception(cause)

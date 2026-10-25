@@ -7,6 +7,7 @@ from typing import TypedDict
 import requests
 from langgraph.graph import END, START, StateGraph
 
+from app import heartbeat
 from app.calendar_client import (
     create_meeting,
     format_slot_label,
@@ -15,23 +16,62 @@ from app.calendar_client import (
     resolve_timezone,
 )
 from app.config import (
+    BOOKING_ENABLED,
     CALENDAR_DISPLAY_TIMEZONE,
     LANGSMITH_PROJECT,
-    LLM_API_KEY,
-    LLM_API_URL,
     LLM_MODEL,
-    LLM_REQUEST_TIMEOUT,
+    RATE_LIMIT_GLOBAL_PER_DAY,
+    RATE_LIMIT_PER_CHAT_PER_DAY,
+    RATE_LIMIT_PER_CHAT_PER_MINUTE,
     TIMEZONE_ALIAS_FAST_PATH,
     is_langsmith_enabled,
 )
 from app.conversation import ConversationState, SchedulingMode
+from app.llm_client import LLMCreditExhausted, LLMError, LLMResult, LLMUnavailable, chat  # noqa: F401
 from app.llm_messages import build_qa_messages, build_timezone_messages
-from app.observability import traceable, tracing_context
+from app.observability import is_langsmith_exception, traceable, tracing_context
 from app.offset import save_offset
 from app.rag import get_relevant_context
-from app.telegram_client import get_updates, send_message
+from app.rate_limit import Decision, MessageLimiter
+from app.telegram_client import TelegramError, get_updates, send_message
 
 logger = logging.getLogger(__name__)
+
+RATE_LIMIT_REPLY = (
+    "You're sending messages faster than I can answer. Please wait a minute and try again."
+)
+DAY_LIMIT_REPLY = (
+    "You've reached today's message limit. "
+    "Please come back tomorrow, or reach out via the links on the portfolio."
+)
+GLOBAL_LIMIT_REPLY = (
+    "I've answered as many questions as I can today. "
+    "Please try again tomorrow, or reach out via the links on the portfolio."
+)
+_LIMIT_REPLIES = {
+    "minute": RATE_LIMIT_REPLY,
+    "chat_day": DAY_LIMIT_REPLY,
+    "global": GLOBAL_LIMIT_REPLY,
+}
+BOOKING_DISABLED_REPLY = (
+    "Scheduling isn't available right now. Please reach out via the links on the portfolio."
+)
+
+_message_limiter = MessageLimiter(
+    per_chat_per_minute=RATE_LIMIT_PER_CHAT_PER_MINUTE,
+    per_chat_per_day=RATE_LIMIT_PER_CHAT_PER_DAY,
+    global_per_day=RATE_LIMIT_GLOBAL_PER_DAY,
+)
+
+
+def _message_allowed(chat_id: int, message_id: int) -> bool:
+    """Gate an LLM-backed path. Notifies once on refusal; later refusals are silent."""
+    result = _message_limiter.check(str(chat_id))
+    if result.decision is Decision.ALLOWED:
+        return True
+    if result.decision is Decision.LIMITED_NOTIFY:
+        _send_telegram(chat_id, _LIMIT_REPLIES.get(result.scope, RATE_LIMIT_REPLY), message_id)
+    return False
 
 _SCHEDULING_KEYWORDS = frozenset(
     {
@@ -62,8 +102,7 @@ def _strip_reasoning(text: str) -> str:
     """Remove <think>...</think> blocks so only the final answer is sent."""
     out = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
     out = re.sub(r"<think>[\s\S]*", "", out, flags=re.IGNORECASE)
-    out = out.strip()
-    return out if out else "(No reply could be extracted.)"
+    return out.strip()
 
 
 def _format_history(history: list[dict]) -> str:
@@ -83,6 +122,12 @@ class AgentState(TypedDict):
     conversations: dict
 
 
+UNAVAILABLE_REPLY = (
+    "Sorry, I'm temporarily unavailable. Please try again later."
+)
+ERROR_REPLY = "Sorry, there was an error. I couldn't process that."
+
+
 @traceable(name="retrieve_context", run_type="retriever")
 def _retrieve_context(user_input: str) -> str:
     return get_relevant_context(user_input)
@@ -90,21 +135,15 @@ def _retrieve_context(user_input: str) -> str:
 
 @traceable(name="call_llm_http", run_type="llm")
 def _call_llm(messages: list[dict]) -> str:
-    headers = {"Content-Type": "application/json"}
-    if LLM_API_KEY:
-        headers["Authorization"] = f"Bearer {LLM_API_KEY}"
-    payload = {
-        "model": LLM_MODEL,
-        "messages": messages,
-    }
-    r = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=LLM_REQUEST_TIMEOUT)
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"].strip()
+    return chat(messages).content
 
 
 @traceable(name="telegram_send_message", run_type="tool")
 def _send_telegram(chat_id: int, reply: str, reply_to_message_id: int) -> None:
-    send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+    try:
+        send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+    except (requests.RequestException, TelegramError) as exc:
+        logger.warning("[telegram] sendMessage failed (chat_id=%s): %s", chat_id, exc)
 
 
 _IANA_KEY_RE = re.compile(r"[A-Za-z]+(?:[_/][A-Za-z_]+)+")
@@ -139,13 +178,13 @@ def _resolve_timezone_llm(text: str) -> str | None:
                 return candidate
             except ZoneInfoNotFoundError:
                 pass
-        logger.warning("[timezone_llm] LLM response not a valid IANA key for input=%r: %r", text, cleaned)
+        logger.warning("[timezone_llm] LLM response not a valid IANA key (input len=%s)", len(text))
         return None
-    except requests.exceptions.RequestException:
-        logger.exception("[timezone_llm] LLM request failed for input=%r", text)
+    except LLMError:
+        logger.exception("[timezone_llm] LLM request failed (input len=%s)", len(text))
         return None
     except Exception:
-        logger.exception("[timezone_llm] unexpected error resolving tz for input=%r", text)
+        logger.exception("[timezone_llm] unexpected error resolving tz (input len=%s)", len(text))
         return None
 
 
@@ -180,6 +219,12 @@ def _handle_scheduling(
         return
 
     if conv.mode == SchedulingMode.IDLE:
+        if not BOOKING_ENABLED:
+            _send_telegram(chat_id, BOOKING_DISABLED_REPLY, message_id)
+            conv.add_message("user", user_input)
+            conv.add_message("assistant", BOOKING_DISABLED_REPLY)
+            return
+
         if not is_calendar_configured():
             reply = "Meeting scheduling isn't configured yet. Please contact Emmanuel directly."
             _send_telegram(chat_id, reply, message_id)
@@ -246,7 +291,11 @@ def _handle_scheduling(
 
         # No valid number — check if it's a timezone change request
         # Alias fast-path is optional (TIMEZONE_ALIAS_FAST_PATH=true); LLM is primary
-        resolved_tz = (resolve_timezone(user_input) if TIMEZONE_ALIAS_FAST_PATH else None) or _resolve_timezone_llm(user_input)
+        resolved_tz = resolve_timezone(user_input) if TIMEZONE_ALIAS_FAST_PATH else None
+        if not resolved_tz:
+            if not _message_allowed(chat_id, message_id):
+                return
+            resolved_tz = _resolve_timezone_llm(user_input)
         if resolved_tz:
             from zoneinfo import ZoneInfo
             conv.recruiter_display_tz = resolved_tz
@@ -345,11 +394,11 @@ def get_telegram_updates_node(state: AgentState) -> dict:
     logger.info("[get_telegram_updates] new messages with text=%s", len(pending))
     for i, (cid, mid, text) in enumerate(pending):
         logger.info(
-            "[get_telegram_updates] message %s: chat_id=%s message_id=%s text=%s",
+            "[get_telegram_updates] message %s: chat_id=%s message_id=%s text_len=%s",
             i + 1,
             cid,
             mid,
-            text[:80] + "..." if len(text) > 80 else text,
+            len(text),
         )
 
     next_offset = max_update_id + 1 if num_updates > 0 else offset
@@ -363,21 +412,43 @@ def get_telegram_updates_node(state: AgentState) -> dict:
 
 
 def process_message_node(state: AgentState) -> dict:
-    """Node: process the first pending message — scheduling state machine or LLM Q&A."""
+    """Node: process the first pending message — scheduling state machine or LLM Q&A.
+
+    A crash while handling one message must not drop the rest of the batch: the offset
+    on disk is already past the whole batch, so log it, apologise, and move on.
+    """
+    heartbeat.touch()
     pending = list(state.get("pending_messages") or [])
     if not pending:
         logger.info("[process_message] no pending messages, skipping")
         return {"pending_messages": []}
 
     conversations: dict = dict(state.get("conversations") or {})
+    chat_id, reply_to_message_id, _ = pending[0]
+    try:
+        return _process_first(pending, conversations)
+    except Exception as exc:
+        if is_langsmith_exception(exc):
+            # Let run_once see it and switch tracing off instead of failing every Q&A.
+            raise
+        logger.exception(
+            "[process_message] failed (chat_id=%s, message_id=%s); skipping message",
+            chat_id,
+            reply_to_message_id,
+        )
+        _send_telegram(chat_id, ERROR_REPLY, reply_to_message_id)
+        return {"pending_messages": pending[1:], "conversations": conversations}
+
+
+def _process_first(pending: list, conversations: dict) -> dict:
     chat_id, reply_to_message_id, user_input = pending[0]
     remaining = len(pending) - 1
     logger.info(
-        "[process_message] processing message (chat_id=%s, reply_to=%s, %s more). input=%s",
+        "[process_message] processing message (chat_id=%s, reply_to=%s, %s more, text_len=%s)",
         chat_id,
         reply_to_message_id,
         remaining,
-        user_input[:80] + "..." if len(user_input) > 80 else user_input,
+        len(user_input),
     )
 
     key = str(chat_id)
@@ -386,8 +457,16 @@ def process_message_node(state: AgentState) -> dict:
     # Route to scheduling if already in a scheduling flow or intent detected
     in_scheduling_flow = conv.mode not in (SchedulingMode.IDLE, SchedulingMode.CANCELLED)
     if in_scheduling_flow or _is_scheduling_intent(user_input):
+        if not in_scheduling_flow and not _message_allowed(chat_id, reply_to_message_id):
+            # Cheap non-LLM path, but still capped so it can't hammer the calendar API.
+            conversations[key] = conv.to_dict()
+            return {"pending_messages": pending[1:], "conversations": conversations}
         logger.info("[process_message] scheduling path (mode=%s)", conv.mode.value)
         _handle_scheduling(conv, user_input, chat_id, reply_to_message_id)
+        conversations[key] = conv.to_dict()
+        return {"pending_messages": pending[1:], "conversations": conversations}
+
+    if not _message_allowed(chat_id, reply_to_message_id):
         conversations[key] = conv.to_dict()
         return {"pending_messages": pending[1:], "conversations": conversations}
 
@@ -420,21 +499,16 @@ def process_message_node(state: AgentState) -> dict:
             try:
                 raw = _call_llm(messages)
                 reply = _strip_reasoning(raw)
+                if not reply:
+                    logger.warning("[process_message] LLM reply empty after stripping reasoning")
+                    reply = ERROR_REPLY
                 logger.info("[process_message] LLM reply length=%s chars", len(reply))
+            except (LLMCreditExhausted, LLMUnavailable) as e:
+                reply = UNAVAILABLE_REPLY
+                logger.error("[process_message] LLM unavailable: %s", e)
             except Exception as e:
-                reply = "Sorry, there was an error. I couldn't process that."
+                reply = ERROR_REPLY
                 logger.exception("[process_message] LLM request failed: %s", e)
-                if isinstance(
-                    e,
-                    (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError),
-                ):
-                    logger.error(
-                        "[process_message] Cannot reach LLM at %s. "
-                        "If Ollama is on the host and the app runs in Docker, bind Ollama on all interfaces "
-                        "(e.g. set OLLAMA_HOST=0.0.0.0:11434 for the Ollama service, restart Ollama), "
-                        "then check on the host: curl -sS http://127.0.0.1:11434/api/tags",
-                        LLM_API_URL,
-                    )
             _send_telegram(chat_id, reply, reply_to_message_id)
 
     conv.add_message("user", user_input)
