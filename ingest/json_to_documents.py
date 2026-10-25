@@ -28,14 +28,13 @@ def _load_json(path: Path) -> Any:
 
 
 def _personal_info_doc(obj: dict) -> Document:
+    # Allowlist only: contact fields (email, phone, ...) must never reach the index.
     links = obj.get("links") or {}
     lines = [
         "# Personal profile",
         f"Name: {obj.get('name', '')}",
         f"Title: {obj.get('title', '')}",
         f"Location: {obj.get('location', '')}",
-        f"Email: {obj.get('email', '')}",
-        f"Phone: {obj.get('phone', '')}",
         f"Summary: {obj.get('summary', '')}",
     ]
     if links:
