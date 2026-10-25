@@ -21,6 +21,7 @@ def test_scan_skips_binary(tmp_path):
 
 def test_main_skips_when_unset(monkeypatch, capsys):
     monkeypatch.delenv("PRIVACY_DENYLIST", raising=False)
+    monkeypatch.delenv("REQUIRE_DENYLIST", raising=False)
     assert main() == 0
     assert "::notice::" in capsys.readouterr().out
 
