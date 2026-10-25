@@ -77,9 +77,16 @@ def run_once(graph, state: dict, sleep=time.sleep) -> dict:
             )
             os.environ[LANGSMITH_RUNTIME_FLAG] = "false"
             return state
-        logger.exception("Poll cycle failed; retrying in 5s")
+        logger.error("Poll cycle failed (%s: %s); retrying in 5s", type(exc).__name__, exc)
         sleep(5)
-        return state
+        # Resume from the on-disk offset (already advanced past the fetched batch) so a
+        # message that crashes processing is skipped, not replayed forever.
+        disk_offset = load_offset()
+        return {
+            **state,
+            "offset": disk_offset if disk_offset is not None else state.get("offset"),
+            "pending_messages": [],
+        }
     if new_state.get("offset") is not None:
         save_offset(new_state["offset"])
     heartbeat.touch()

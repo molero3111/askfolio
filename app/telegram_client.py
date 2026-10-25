@@ -18,16 +18,16 @@ def get_updates(offset: int | None = None) -> list[dict[str, Any]]:
     try:
         # Keep read timeout above long-poll timeout to reduce false client timeouts.
         r = requests.get(url, params=params, timeout=(10, GET_UPDATES_TIMEOUT + 30))
-        r.raise_for_status()
-        data = r.json()
-    except requests.exceptions.Timeout as exc:
-        logger.warning("[telegram_client] getUpdates timeout: %s", exc)
+    except requests.exceptions.ReadTimeout as exc:
+        # Normal for a long poll with no new updates.
+        logger.warning("[telegram_client] getUpdates read timeout: %s", exc)
         return []
-    except requests.exceptions.RequestException as exc:
-        logger.warning("[telegram_client] getUpdates request failed: %s", exc)
-        return []
+    # Any other failure (connect error, DNS, 4xx/5xx, ok:false) raises so the
+    # caller backs off and the heartbeat goes stale during a sustained outage.
+    r.raise_for_status()
+    data = r.json()
     if not data.get("ok"):
-        return []
+        raise RuntimeError(f"getUpdates returned ok=false: {str(data)[:200]}")
     return data.get("result", [])
 
 

@@ -11,11 +11,16 @@ from pathlib import Path
 
 def main() -> int:
     path = Path(os.environ.get("HEARTBEAT_FILE", "/tmp/heartbeat"))
-    max_age = 3 * int(os.environ.get("GET_UPDATES_TIMEOUT", "60"))
+    try:
+        timeout = int(os.environ.get("GET_UPDATES_TIMEOUT", "60"))
+    except ValueError:
+        timeout = 60
+    max_age = 3 * timeout
     try:
         age = time.time() - path.stat().st_mtime
     except OSError:
         return 1
+    # A future mtime (negative age) counts as healthy.
     return 0 if age < max_age else 1
 
 
