@@ -36,3 +36,24 @@ def test_crash_in_one_message_does_not_drop_the_batch(monkeypatch):
     assert sent == [(1, "fine"), (2, graph.ERROR_REPLY), (3, "fine")]
     assert state["pending_messages"] == []
     assert "1" in state["conversations"] and "3" in state["conversations"]
+
+
+def test_reasoning_only_reply_becomes_error_reply(monkeypatch):
+    sent = _setup(monkeypatch)
+    monkeypatch.setattr(graph, "_call_llm", lambda _m: "<think>only thoughts</think>")
+    state = {"offset": None, "pending_messages": [(1, 10, "hello")], "conversations": {}}
+    out = graph.process_message_node(state)
+    assert sent == [(1, graph.ERROR_REPLY)]
+    assert "No reply could be extracted" not in str(out["conversations"])
+
+
+def test_message_text_is_not_logged(monkeypatch, caplog):
+    import logging
+
+    _setup(monkeypatch)
+    secret_text = "my private phrase about salary"
+    state = {"offset": None, "pending_messages": [(1, 10, secret_text)], "conversations": {}}
+    with caplog.at_level(logging.INFO):
+        graph.process_message_node(state)
+    assert "private phrase" not in caplog.text
+    assert "chat_id=1" in caplog.text

@@ -102,8 +102,7 @@ def _strip_reasoning(text: str) -> str:
     """Remove <think>...</think> blocks so only the final answer is sent."""
     out = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
     out = re.sub(r"<think>[\s\S]*", "", out, flags=re.IGNORECASE)
-    out = out.strip()
-    return out if out else "(No reply could be extracted.)"
+    return out.strip()
 
 
 def _format_history(history: list[dict]) -> str:
@@ -395,11 +394,11 @@ def get_telegram_updates_node(state: AgentState) -> dict:
     logger.info("[get_telegram_updates] new messages with text=%s", len(pending))
     for i, (cid, mid, text) in enumerate(pending):
         logger.info(
-            "[get_telegram_updates] message %s: chat_id=%s message_id=%s text=%s",
+            "[get_telegram_updates] message %s: chat_id=%s message_id=%s text_len=%s",
             i + 1,
             cid,
             mid,
-            text[:80] + "..." if len(text) > 80 else text,
+            len(text),
         )
 
     next_offset = max_update_id + 1 if num_updates > 0 else offset
@@ -442,11 +441,11 @@ def _process_first(pending: list, conversations: dict) -> dict:
     chat_id, reply_to_message_id, user_input = pending[0]
     remaining = len(pending) - 1
     logger.info(
-        "[process_message] processing message (chat_id=%s, reply_to=%s, %s more). input=%s",
+        "[process_message] processing message (chat_id=%s, reply_to=%s, %s more, text_len=%s)",
         chat_id,
         reply_to_message_id,
         remaining,
-        user_input[:80] + "..." if len(user_input) > 80 else user_input,
+        len(user_input),
     )
 
     key = str(chat_id)
@@ -497,6 +496,9 @@ def _process_first(pending: list, conversations: dict) -> dict:
             try:
                 raw = _call_llm(messages)
                 reply = _strip_reasoning(raw)
+                if not reply:
+                    logger.warning("[process_message] LLM reply empty after stripping reasoning")
+                    reply = ERROR_REPLY
                 logger.info("[process_message] LLM reply length=%s chars", len(reply))
             except LLMCreditExhausted:
                 reply = UNAVAILABLE_REPLY
