@@ -1,0 +1,199 @@
+# Deploy askfolio to production when code is merged into the main branch (or on
+# demand from main). The server side is a forced ssh command, reached as
+# `ssh deploy@<host> "askfolio <sha>"`.
+# - resolve: decides what ships. A push (or a dispatch without `sha`) builds main HEAD; a
+#   dispatch with `sha` redeploys that existing image (rollback) after the guards in
+#   .github/scripts/resolve-deploy-sha.sh.
+# - ci: runs ci.yml on the same commit; nothing builds or deploys unless it passes.
+#   (workflow_call, not workflow_run: workflow_run runs the default branch's copy of this file.)
+# - build: pushes ghcr.io/molero3111/askfolio:<sha> (amd64, private).
+# - deploy: joins the tailnet and SSHes to the deploy user, whose forced command takes
+#   "<app> <sha>" with the job token on stdin (the image is private) and reports by exit code.
+#   The server migrates with the new image, swaps, health-gates /healthz and reverts on failure.
+# Secrets live in the "production" environment:
+#   TS_OAUTH_CLIENT_ID, TS_OAUTH_SECRET, DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS,
+#   DEPLOY_HOST (the host stays out of this public repo)
+# No PAT and no build args with secrets: the image needs only runtime env, from the server's .env.
+
+name: Deploy production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: >-
+          Redeploy this existing image instead of building (rollback): a full commit SHA on
+          main whose CI passed. Leave empty to build and deploy main HEAD.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+# ci.yml's own concurrency group is ci-<workflow>-<ref>, so it never collides with this one.
+concurrency:
+  group: deploy-askfolio
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/molero3111/askfolio
+
+jobs:
+  resolve:
+    name: Resolve what to deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Only main builds and deploys; a manual run from another branch skips every job
+    if: github.repository == 'molero3111/askfolio' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      checks: read
+      packages: read
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # Full history, to check that a requested SHA is on main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Log in to GHCR
+        if: inputs.sha != ''
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve
+        id: plan
+        env:
+          REF: ${{ github.ref }}
+          REQUESTED_SHA: ${{ inputs.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/resolve-deploy-sha.sh
+
+  ci:
+    name: ci
+    needs: resolve
+    if: github.repository == 'molero3111/askfolio' && github.ref == 'refs/heads/main' && needs.resolve.outputs.mode == 'build'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    secrets:
+      PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
+
+  build:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [resolve, ci]
+    if: github.repository == 'molero3111/askfolio' && github.ref == 'refs/heads/main' && needs.resolve.outputs.mode == 'build'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE_NAME }}:${{ needs.resolve.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.resolve.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    # The server's host lock waits up to 15 min (a nightly backup or another deploy), then the
+    # pull, the migrate step and up to two health gates (new tag, then revert): about 22 min worst case.
+    timeout-minutes: 30
+    needs: [resolve, build]
+    # A build deploys only after CI and the build passed; a redeploy runs with build skipped.
+    if: >-
+      !cancelled() && github.repository == 'molero3111/askfolio' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' &&
+      ((needs.resolve.outputs.mode == 'build' && needs.build.result == 'success') ||
+      (needs.resolve.outputs.mode == 'redeploy' && needs.build.result == 'skipped'))
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade # v3.3.0
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Deploy via SSH
+        # The image may be private: the job token goes on stdin for this one pull, with no trailing
+        # newline, and never in argv. The server's last output line is its result line; the exit
+        # code decides.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOY_SHA: ${{ needs.resolve.outputs.sha }}
+          DEPLOY_MODE: ${{ needs.resolve.outputs.mode }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set +e
+          printf '%s' "$GITHUB_TOKEN" | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "deploy@${DEPLOY_HOST}" "askfolio $DEPLOY_SHA"
+          rc=$?
+          set -e
+          case "$rc" in
+            0) msg="deployed $DEPLOY_SHA ($DEPLOY_MODE), healthy" ;;
+            1) msg="the server's deploy command hit an internal error; check the server" ;;
+            2) msg="refused: bad app or tag; nothing changed" ;;
+            3) msg="image pull failed; nothing changed" ;;
+            4) msg="migration failed before the swap; the previous container is still serving" ;;
+            5) msg="new container failed the health gate; reverted to the previous image, which is healthy" ;;
+            6) msg="health gate failed and the revert failed too (or there was no previous image); askfolio is down, a human must look" ;;
+            7) msg="timed out waiting for the host lock; nothing changed" ;;
+            255) msg="ssh failed or the session dropped; if it got as far as the deploy, the server finishes it, so check the deployed tag on the server" ;;
+            *) msg="deploy failed with exit code $rc" ;;
+          esac
+          echo "### askfolio deploy: $msg" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" -eq 0 ]; then
+            echo "$msg"
+          else
+            echo "::error::$msg (exit $rc)"
+          fi
+          exit "$rc"
