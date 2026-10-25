@@ -1,9 +1,11 @@
 import logging
 import re
-import requests
-from typing import TypedDict, Sequence
+from collections.abc import Sequence
+from datetime import UTC
+from typing import TypedDict
 
-from langgraph.graph import StateGraph, START, END
+import requests
+from langgraph.graph import END, START, StateGraph
 
 from app.calendar_client import (
     create_meeting,
@@ -150,10 +152,10 @@ def _resolve_timezone_llm(text: str) -> str | None:
 
 def _tz_display_name(iana_key: str) -> str:
     """Return a readable timezone label, e.g. 'Eastern Time (ET)' or 'America/New_York'."""
+    from datetime import datetime
     from zoneinfo import ZoneInfo
-    from datetime import datetime, timezone as _tz
     try:
-        abbr = datetime.now(_tz.utc).astimezone(ZoneInfo(iana_key)).strftime("%Z")
+        abbr = datetime.now(UTC).astimezone(ZoneInfo(iana_key)).strftime("%Z")
         # Build a friendly name from the IANA key city part
         city = iana_key.split("/")[-1].replace("_", " ")
         return f"{city} ({abbr})"
@@ -325,6 +327,7 @@ def _handle_scheduling(
 def _persist_offset(offset: int) -> None:
     """Write the Telegram offset to disk right after fetching updates."""
     from pathlib import Path
+
     from app.config import TELEGRAM_OFFSET_FILE
     p = Path(TELEGRAM_OFFSET_FILE)
     p = p if p.is_absolute() else Path.cwd() / p

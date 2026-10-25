@@ -46,7 +46,7 @@ class ConversationState:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "ConversationState":
+    def from_dict(cls, d: dict) -> ConversationState:
         obj = cls()
         obj.mode = SchedulingMode(d.get("mode", SchedulingMode.IDLE.value))
         obj.history = d.get("history", [])

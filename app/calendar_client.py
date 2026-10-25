@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -227,7 +227,7 @@ def get_available_slots(display_tz_key: str | None = None) -> list[dict]:
 
     display_tz = ZoneInfo(display_tz_key or CALENDAR_DISPLAY_TIMEZONE)
     duration = timedelta(minutes=CALENDAR_SLOT_DURATION_MINUTES)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Start from tomorrow so the recruiter isn't pressured into same-day booking
     start = (now + timedelta(days=1)).astimezone(dev_tz).replace(
@@ -240,8 +240,8 @@ def get_available_slots(display_tz_key: str | None = None) -> list[dict]:
         .freebusy()
         .query(
             body={
-                "timeMin": start.astimezone(timezone.utc).isoformat(),
-                "timeMax": end.astimezone(timezone.utc).isoformat(),
+                "timeMin": start.astimezone(UTC).isoformat(),
+                "timeMax": end.astimezone(UTC).isoformat(),
                 "items": [{"id": GOOGLE_CALENDAR_ID}],
             }
         )
@@ -259,7 +259,7 @@ def get_available_slots(display_tz_key: str | None = None) -> list[dict]:
     slots: list[dict] = []
     cursor = start
 
-    while cursor.astimezone(timezone.utc) < end.astimezone(timezone.utc) and len(slots) < 6:
+    while cursor.astimezone(UTC) < end.astimezone(UTC) and len(slots) < 6:
         if cursor.weekday() >= 5:
             cursor = (cursor + timedelta(days=1)).replace(
                 hour=CALENDAR_WORKING_HOURS_START, minute=0, second=0, microsecond=0
@@ -281,8 +281,8 @@ def get_available_slots(display_tz_key: str | None = None) -> list[dict]:
             )
             continue
 
-        cursor_utc = cursor.astimezone(timezone.utc)
-        slot_end_utc = slot_end.astimezone(timezone.utc)
+        cursor_utc = cursor.astimezone(UTC)
+        slot_end_utc = slot_end.astimezone(UTC)
 
         if not any(b_start < slot_end_utc and b_end > cursor_utc for b_start, b_end in busy):
             slots.append(

@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from contextlib import contextmanager
-from typing import Any, Callable
+from typing import Any
 
 try:
     from langsmith import traceable as _traceable

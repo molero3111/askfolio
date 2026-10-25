@@ -1,8 +1,9 @@
 import logging
-import requests
 from typing import Any
 
-from app.config import TELEGRAM_BOT_TOKEN, GET_UPDATES_TIMEOUT
+import requests
+
+from app.config import GET_UPDATES_TIMEOUT, TELEGRAM_BOT_TOKEN
 
 BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 logger = logging.getLogger(__name__)
