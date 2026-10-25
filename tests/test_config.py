@@ -32,3 +32,8 @@ def test_absolute_path_is_unchanged(tmp_path):
     p = tmp_path / "token.json"
     assert config.resolve_path(str(p)) == p
     assert isinstance(config.resolve_path(str(p)), Path)
+
+
+def test_booking_disabled_when_env_missing(monkeypatch, reload_config):
+    monkeypatch.delenv("BOOKING_ENABLED", raising=False)
+    assert reload_config().BOOKING_ENABLED is False
