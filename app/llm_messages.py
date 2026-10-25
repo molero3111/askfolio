@@ -33,10 +33,25 @@ _HINT_BOOKING_OFF = (
 )
 
 
+_RULE_BOOKING_ON = (
+    "If someone wants to schedule a meeting, call or interview, say you can help arrange one."
+)
+_RULE_BOOKING_OFF = (
+    "If someone asks to schedule a meeting, call or interview, explain that scheduling isn't "
+    "available through this assistant and point them to the profile links (LinkedIn, GitHub, portfolio)."
+)
+
+
 def build_qa_messages(context: str, chat_history: str, user_input: str) -> list[dict]:
     hint = _HINT_BOOKING_ON if BOOKING_ENABLED else _HINT_BOOKING_OFF
+    rule = _RULE_BOOKING_ON if BOOKING_ENABLED else _RULE_BOOKING_OFF
     # replace(), not format(): the system prompt is free text that may contain braces.
-    system = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip().replace("{scheduling_hint}", hint)
+    system = (
+        SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        .strip()
+        .replace("{scheduling_hint}", hint)
+        .replace("{scheduling_rule}", rule)
+    )
     user = USER_PROMPT_PATH.read_text(encoding="utf-8").format(
         context=sanitize(context),
         chat_history=sanitize(chat_history),
