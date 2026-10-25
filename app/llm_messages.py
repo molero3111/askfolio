@@ -8,7 +8,7 @@ from app.config import (
 )
 
 _TAG_RE = re.compile(
-    r"<(/?)(profile_context|chat_history|question)>",
+    r"<\s*(/?)\s*(profile_context|chat_history|question)\b[^>]*>",
     re.IGNORECASE,
 )
 
