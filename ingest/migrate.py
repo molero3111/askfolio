@@ -105,7 +105,11 @@ def main() -> int:
                 raise
         finally:
             # PGEngine.close() is async but must run on the engine's own background loop.
-            engine._run_as_sync(engine.close())
+            # Never raise from here: it would replace the original exception.
+            try:
+                engine._run_as_sync(engine.close())
+            except Exception as close_err:
+                print(f"engine close failed: {type(close_err).__name__}")
 
     with_retry(_migrate)
     return 0
