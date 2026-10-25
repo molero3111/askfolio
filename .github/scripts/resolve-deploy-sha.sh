@@ -27,15 +27,19 @@ else
   git cat-file -e "${sha}^{commit}" 2>/dev/null || fail "commit $sha is not in this repository"
   git merge-base --is-ancestor "$sha" origin/main || fail "commit $sha is not on main's history"
 
-  # ci.yml's "test" and "image" jobs both succeeded on the commit. The check runs are named
-  # exactly "ci / test" and "ci / image" when the deploy workflow called ci.yml (job name "ci"), or
-  # bare "test" / "image" in ci.yml's own run. Names match exactly, and only GitHub Actions' own
-  # runs count, so another app cannot satisfy the guard with a look-alike name.
-  runs=$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" \
-    --jq '[.check_runs[] | select(.app.slug == "github-actions" and .conclusion == "success") | .name]')
+  # ci.yml's "test" and "image" jobs must each have succeeded on the commit. The check runs are
+  # named exactly "ci / test" and "ci / image" when the deploy workflow called ci.yml (job name
+  # "ci"), or bare "test" / "image" in ci.yml's own run. Names match exactly, and only GitHub
+  # Actions' own runs count, so another app cannot satisfy the guard with a look-alike name. All
+  # pages are read, and for each job the MOST RECENT run decides, so a later failed re-run wins.
+  runs=$(gh api --paginate "repos/$REPO/commits/$sha/check-runs?per_page=100" \
+    --jq '.check_runs[] | select(.app.slug == "github-actions")
+          | {name, conclusion, at: (.completed_at // .started_at // "")}' | jq -s '.')
   for job in test image; do
-    jq -e --arg a "ci / $job" --arg b "$job" 'any(.[]; . == $a or . == $b)' <<<"$runs" >/dev/null ||
-      fail "CI ($job) has no successful GitHub Actions run for $sha"
+    jq -e --arg a "ci / $job" --arg b "$job" '
+      [.[] | select(.name == $a or .name == $b)] | sort_by(.at) | last | .conclusion == "success"
+    ' <<<"$runs" >/dev/null ||
+      fail "CI ($job): the latest GitHub Actions run for $sha is missing or did not succeed"
   done
 
   docker manifest inspect "$IMAGE_NAME:$sha" >/dev/null 2>&1 ||
