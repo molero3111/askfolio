@@ -67,8 +67,22 @@ def startup() -> None:
     heartbeat.touch()
 
 
+def _resume_state(state: dict) -> dict:
+    """State to continue from after a failed cycle.
+
+    The on-disk offset is already advanced past the fetched batch, so resuming from it
+    skips a crashing message instead of replaying it (duplicate replies) forever.
+    """
+    disk_offset = load_offset()
+    return {
+        **state,
+        "offset": disk_offset if disk_offset is not None else state.get("offset"),
+        "pending_messages": [],
+    }
+
+
 def run_once(graph, state: dict, sleep=time.sleep) -> dict:
-    """Run one poll cycle. Never raises: on failure sleep 5s and keep the old state."""
+    """Run one poll cycle. Never raises: on failure resume from the disk offset."""
     logger = logging.getLogger(__name__)
     try:
         new_state = graph.invoke(state)
@@ -79,17 +93,10 @@ def run_once(graph, state: dict, sleep=time.sleep) -> dict:
                 exc,
             )
             os.environ[LANGSMITH_RUNTIME_FLAG] = "false"
-            return state
+            return _resume_state(state)
         logger.exception("Poll cycle failed (%s); retrying in 5s", type(exc).__name__)
         sleep(5)
-        # Resume from the on-disk offset (already advanced past the fetched batch) so a
-        # message that crashes processing is skipped, not replayed forever.
-        disk_offset = load_offset()
-        return {
-            **state,
-            "offset": disk_offset if disk_offset is not None else state.get("offset"),
-            "pending_messages": [],
-        }
+        return _resume_state(state)
     if new_state.get("offset") is not None:
         save_offset(new_state["offset"])
     heartbeat.touch()

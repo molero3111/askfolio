@@ -245,3 +245,20 @@ def test_filter_survives_malformed_log_call():
     out = logging.Formatter("%(message)s").format(rec)
     assert TOKEN not in out
     assert "bot***" in out
+
+
+def test_langsmith_error_resumes_from_disk_offset(monkeypatch, tmp_path):
+    monkeypatch.setenv("HEARTBEAT_FILE", str(tmp_path / "hb"))
+    monkeypatch.setattr(main, "load_offset", lambda: 99)
+    monkeypatch.setenv(main.LANGSMITH_RUNTIME_FLAG, "true")  # restored on teardown
+
+    class LangsmithGraph:
+        def invoke(self, state):
+            raise RuntimeError("langsmith upload failed")
+
+    prev = {"offset": 1, "pending_messages": [(1, 2, "x")], "conversations": {"1": {}}}
+    out = main.run_once(LangsmithGraph(), prev, sleep=lambda s: None)
+    assert out["offset"] == 99
+    assert out["pending_messages"] == []
+    assert out["conversations"] == {"1": {}}
+    assert os.environ[main.LANGSMITH_RUNTIME_FLAG] == "false"
