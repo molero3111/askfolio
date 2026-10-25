@@ -4,6 +4,7 @@ Run as ``python -m ingest.migrate`` (from the project root / ``/app``).
 """
 import asyncio
 import sys
+import time
 from pathlib import Path
 
 # Keep direct execution (python ingest/migrate.py) working as well as -m.
@@ -19,6 +20,34 @@ import sqlalchemy
 from langchain_postgres import PGEngine
 
 from app.config import DB_CONNECTION_URL_ASYNC, PGVECTOR_COLLECTION_NAME, VECTOR_SIZE
+
+RETRY_ATTEMPTS = 6  # 1 try + 5 retries, sleeping 1..5s (~15s)
+
+
+def _is_connect_error(exc: BaseException) -> bool:
+    """True for connection-refused / cannot-connect failures (not SQL errors)."""
+    if isinstance(exc, (ConnectionError, OSError)):
+        return True
+    if isinstance(exc, sqlalchemy.exc.OperationalError):
+        return True
+    try:
+        import asyncpg
+
+        return isinstance(exc, (asyncpg.CannotConnectNowError, asyncpg.PostgresConnectionError))
+    except ImportError:
+        return False
+
+
+def with_retry(fn, attempts=RETRY_ATTEMPTS, sleep=time.sleep, is_retryable=_is_connect_error):
+    """Call fn(); on a connect error sleep 1, 2, 3... s and retry (~15s for 5 attempts)."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as e:
+            if attempt == attempts or not is_retryable(e):
+                raise
+            print(f"Database not reachable ({type(e).__name__}); retry {attempt}/{attempts - 1} in {attempt}s...")
+            sleep(attempt)
 
 
 def _create_extension() -> None:
@@ -44,22 +73,25 @@ def main() -> int:
         )
         return 1
 
-    _create_extension()
-    print("Extension 'vector' ready.")
+    def _migrate() -> None:
+        _create_extension()
+        print("Extension 'vector' ready.")
 
-    engine = PGEngine.from_connection_string(url=DB_CONNECTION_URL_ASYNC)
-    try:
-        engine.init_vectorstore_table(
-            table_name=PGVECTOR_COLLECTION_NAME,
-            vector_size=VECTOR_SIZE,
-        )
-        print(f'Created table "{PGVECTOR_COLLECTION_NAME}".')
-    except sqlalchemy.exc.ProgrammingError as e:
-        err_msg = str(e).lower()
-        if "already exists" in err_msg or "duplicatetable" in err_msg:
-            print(f'Table "{PGVECTOR_COLLECTION_NAME}" already exists, skipping create.')
-        else:
-            raise
+        engine = PGEngine.from_connection_string(url=DB_CONNECTION_URL_ASYNC)
+        try:
+            engine.init_vectorstore_table(
+                table_name=PGVECTOR_COLLECTION_NAME,
+                vector_size=VECTOR_SIZE,
+            )
+            print(f'Created table "{PGVECTOR_COLLECTION_NAME}".')
+        except sqlalchemy.exc.ProgrammingError as e:
+            err_msg = str(e).lower()
+            if "already exists" in err_msg or "duplicatetable" in err_msg:
+                print(f'Table "{PGVECTOR_COLLECTION_NAME}" already exists, skipping create.')
+            else:
+                raise
+
+    with_retry(_migrate)
     return 0
 
 
