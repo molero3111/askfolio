@@ -14,9 +14,13 @@ from app.calendar_client import (
     resolve_timezone,
 )
 from app.config import (
+    BOOKING_ENABLED,
     CALENDAR_DISPLAY_TIMEZONE,
     LANGSMITH_PROJECT,
     LLM_MODEL,
+    RATE_LIMIT_GLOBAL_PER_DAY,
+    RATE_LIMIT_PER_CHAT_PER_DAY,
+    RATE_LIMIT_PER_CHAT_PER_MINUTE,
     TIMEZONE_ALIAS_FAST_PATH,
     is_langsmith_enabled,
 )
@@ -26,9 +30,33 @@ from app.llm_messages import build_qa_messages, build_timezone_messages
 from app.observability import traceable, tracing_context
 from app.offset import save_offset
 from app.rag import get_relevant_context
+from app.rate_limit import Decision, MessageLimiter
 from app.telegram_client import get_updates, send_message
 
 logger = logging.getLogger(__name__)
+
+RATE_LIMIT_REPLY = (
+    "You're sending messages faster than I can answer. Please wait a minute and try again."
+)
+BOOKING_DISABLED_REPLY = (
+    "Scheduling isn't available right now. Please reach out via the links on the portfolio."
+)
+
+_message_limiter = MessageLimiter(
+    per_chat_per_minute=RATE_LIMIT_PER_CHAT_PER_MINUTE,
+    per_chat_per_day=RATE_LIMIT_PER_CHAT_PER_DAY,
+    global_per_day=RATE_LIMIT_GLOBAL_PER_DAY,
+)
+
+
+def _message_allowed(chat_id: int, message_id: int) -> bool:
+    """Gate an LLM-backed path. Notifies once on refusal; later refusals are silent."""
+    decision = _message_limiter.check(str(chat_id))
+    if decision is Decision.ALLOWED:
+        return True
+    if decision is Decision.LIMITED_NOTIFY:
+        _send_telegram(chat_id, RATE_LIMIT_REPLY, message_id)
+    return False
 
 _SCHEDULING_KEYWORDS = frozenset(
     {
@@ -174,6 +202,12 @@ def _handle_scheduling(
         return
 
     if conv.mode == SchedulingMode.IDLE:
+        if not BOOKING_ENABLED:
+            _send_telegram(chat_id, BOOKING_DISABLED_REPLY, message_id)
+            conv.add_message("user", user_input)
+            conv.add_message("assistant", BOOKING_DISABLED_REPLY)
+            return
+
         if not is_calendar_configured():
             reply = "Meeting scheduling isn't configured yet. Please contact Emmanuel directly."
             _send_telegram(chat_id, reply, message_id)
@@ -240,7 +274,11 @@ def _handle_scheduling(
 
         # No valid number — check if it's a timezone change request
         # Alias fast-path is optional (TIMEZONE_ALIAS_FAST_PATH=true); LLM is primary
-        resolved_tz = (resolve_timezone(user_input) if TIMEZONE_ALIAS_FAST_PATH else None) or _resolve_timezone_llm(user_input)
+        resolved_tz = resolve_timezone(user_input) if TIMEZONE_ALIAS_FAST_PATH else None
+        if not resolved_tz:
+            if not _message_allowed(chat_id, message_id):
+                return
+            resolved_tz = _resolve_timezone_llm(user_input)
         if resolved_tz:
             from zoneinfo import ZoneInfo
             conv.recruiter_display_tz = resolved_tz
@@ -382,6 +420,10 @@ def process_message_node(state: AgentState) -> dict:
     if in_scheduling_flow or _is_scheduling_intent(user_input):
         logger.info("[process_message] scheduling path (mode=%s)", conv.mode.value)
         _handle_scheduling(conv, user_input, chat_id, reply_to_message_id)
+        conversations[key] = conv.to_dict()
+        return {"pending_messages": pending[1:], "conversations": conversations}
+
+    if not _message_allowed(chat_id, reply_to_message_id):
         conversations[key] = conv.to_dict()
         return {"pending_messages": pending[1:], "conversations": conversations}
 
