@@ -3,6 +3,7 @@
 Run as ``python -m ingest.migrate`` (from the project root / ``/app``).
 """
 import asyncio
+import re
 import sys
 import time
 from pathlib import Path
@@ -21,7 +22,13 @@ from langchain_postgres import PGEngine
 
 from app.config import DB_CONNECTION_URL_ASYNC, PGVECTOR_COLLECTION_NAME, VECTOR_SIZE
 
+TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 RETRY_ATTEMPTS = 6  # 1 try + 5 retries, sleeping 1..5s (~15s)
+
+
+def valid_table_name(name: str) -> bool:
+    """True if name is a plain SQL identifier (letters, digits, underscore; no leading digit)."""
+    return bool(TABLE_NAME_RE.fullmatch(name or ""))
 
 
 def _is_connect_error(exc: BaseException) -> bool:
@@ -72,6 +79,12 @@ def main() -> int:
             "(and POSTGRES_HOST / POSTGRES_PORT if not using defaults)."
         )
         return 1
+    if not valid_table_name(PGVECTOR_COLLECTION_NAME):
+        print(
+            f"Invalid PGVECTOR_COLLECTION_NAME {PGVECTOR_COLLECTION_NAME!r}: "
+            "use only letters, digits and underscores, not starting with a digit."
+        )
+        return 2
 
     def _migrate() -> None:
         _create_extension()
@@ -90,6 +103,9 @@ def main() -> int:
                 print(f'Table "{PGVECTOR_COLLECTION_NAME}" already exists, skipping create.')
             else:
                 raise
+        finally:
+            # PGEngine.close() is async but must run on the engine's own background loop.
+            engine._run_as_sync(engine.close())
 
     with_retry(_migrate)
     return 0

@@ -37,3 +37,26 @@ def test_non_connect_errors_not_retried():
     with pytest.raises(ValueError):
         with_retry(bad, sleep=sleeps.append)
     assert sleeps == []
+
+
+@pytest.mark.parametrize("name", ["rag_docs", "_t", "Docs2", "a"])
+def test_valid_table_names(name):
+    from ingest.migrate import valid_table_name
+
+    assert valid_table_name(name)
+
+
+@pytest.mark.parametrize("name", ["", "1docs", "a-b", "a b", 'a"; DROP TABLE x;--', "schema.table", "a\n", "é"])
+def test_invalid_table_names(name):
+    from ingest.migrate import valid_table_name
+
+    assert not valid_table_name(name)
+
+
+def test_main_exits_2_on_bad_table_name(monkeypatch, capsys):
+    import ingest.migrate as m
+
+    monkeypatch.setattr(m, "DB_CONNECTION_URL_ASYNC", "postgresql+asyncpg://x")
+    monkeypatch.setattr(m, "PGVECTOR_COLLECTION_NAME", "bad-name")
+    assert m.main() == 2
+    assert "PGVECTOR_COLLECTION_NAME" in capsys.readouterr().out
