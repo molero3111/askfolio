@@ -1,10 +1,9 @@
 """Telegram update-offset persistence shared by main.py and the graph."""
 import logging
-import os
-import tempfile
 from pathlib import Path
 
 from app import config
+from app.secure_io import atomic_write_secret
 
 logger = logging.getLogger(__name__)
 
@@ -23,16 +22,9 @@ def load_offset() -> int | None:
 
 
 def save_offset(offset: int) -> None:
-    """Atomically persist the offset (temp file in the same dir + os.replace)."""
+    """Atomically persist the offset (see secure_io.atomic_write_secret)."""
     path = offset_path()
-    tmp_name = None
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
-        with os.fdopen(fd, "w") as f:
-            f.write(str(offset))
-        os.replace(tmp_name, path)
+        atomic_write_secret(path, str(offset))
     except OSError:
-        logger.warning("Could not save offset to %s", path)
-        if tmp_name:
-            Path(tmp_name).unlink(missing_ok=True)
+        logger.warning("Could not save offset to %s", path, exc_info=True)

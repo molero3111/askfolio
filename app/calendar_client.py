@@ -17,6 +17,7 @@ from app.config import (
     GOOGLE_CALENDAR_ID,
     GOOGLE_TOKEN_PATH,
 )
+from app.secure_io import atomic_write_secret
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +198,10 @@ def _get_credentials() -> Credentials:
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            token_path.write_text(creds.to_json())
+            try:
+                atomic_write_secret(token_path, creds.to_json())
+            except OSError:
+                logger.warning("Could not save refreshed token to %s", token_path, exc_info=True)
         else:
             raise RuntimeError(
                 f"Google Calendar token not found at {token_path}. "

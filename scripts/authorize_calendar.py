@@ -23,6 +23,7 @@ load_dotenv(ROOT / ".env")
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 from app.config import GOOGLE_CREDENTIALS_PATH, GOOGLE_TOKEN_PATH
+from app.secure_io import atomic_write_secret
 
 _SCOPES = ["https://www.googleapis.com/auth/calendar"]
 _CREDS_PATH = Path(GOOGLE_CREDENTIALS_PATH)
@@ -37,7 +38,6 @@ if not _CREDS_PATH.exists():
 
 flow = InstalledAppFlow.from_client_secrets_file(str(_CREDS_PATH), _SCOPES)
 creds = flow.run_local_server(port=0)
-_TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-_TOKEN_PATH.write_text(creds.to_json())
+atomic_write_secret(_TOKEN_PATH, creds.to_json())
 print(f"\nAuthorization complete. Token saved to {_TOKEN_PATH.resolve()}")
 print("You can now start the application — scheduling is ready.")

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -39,3 +40,33 @@ def test_relative_path_resolves_against_cwd(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "TELEGRAM_OFFSET_FILE", "data/o.txt")
     monkeypatch.chdir(tmp_path)
     assert offset.offset_path() == Path(tmp_path) / "data" / "o.txt"
+
+
+def test_overwrites_existing_value(offset_file):
+    offset.save_offset(1)
+    offset.save_offset(2)
+    assert offset.load_offset() == 2
+
+
+def test_replace_failure_cleans_temp_and_does_not_raise(offset_file, monkeypatch, caplog):
+    offset.save_offset(5)
+
+    def boom(src, dst):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(os, "replace", boom)
+    offset.save_offset(6)
+    assert offset.load_offset() == 5
+    assert list(offset_file.parent.iterdir()) == [offset_file]
+    assert any(r.exc_info for r in caplog.records)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+def test_unwritable_dir_does_not_raise(offset_file):
+    offset_file.parent.mkdir(parents=True)
+    offset_file.parent.chmod(0o500)
+    try:
+        offset.save_offset(9)
+        assert offset.load_offset() is None
+    finally:
+        offset_file.parent.chmod(0o700)
