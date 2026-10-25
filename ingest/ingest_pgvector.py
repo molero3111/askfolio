@@ -94,7 +94,7 @@ def main():
     all_docs = []
     all_docs.extend(documents_from_knowledge_base(kb_path))
     all_docs.extend(documents_from_github_projects(gh_path))
-    all_docs = scrub_documents(all_docs, contact_values(json.loads(kb_path.read_text())))
+    all_docs = scrub_documents(all_docs, contact_values(json.loads(kb_path.read_text(encoding="utf-8"))))
     print(f"Built {len(all_docs)} section-level documents.")
 
     chunks = split_documents_semantically(

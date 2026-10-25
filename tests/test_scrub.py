@@ -35,6 +35,13 @@ def test_removes_contacts(src):
         "github: janedoe",
         "v1.2.3",
         "port 5432",
+        "2018-2020 (2 years)",
+        "Q1 2020 2021 2022 results",
+        "2019\n2020\n2021",
+        "Python 3.10 3.11 3.12 3.13",
+        "192.168.100.200",
+        "git clone git@github.com:janedoe/repo.git",
+        "https://janedoe@host.com/x",
     ],
 )
 def test_keeps_non_contacts(keep):
