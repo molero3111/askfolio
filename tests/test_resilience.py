@@ -323,3 +323,26 @@ def test_importing_main_installs_no_global_hooks():
     env = {**os.environ, "ASKFOLIO_SKIP_DOTENV": "1"}
     r = subprocess.run([sys.executable, "-c", code], check=False, capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stderr
+
+
+def test_sigterm_handler_exits_cleanly():
+    with pytest.raises(SystemExit) as ei:
+        main.handle_sigterm(15, None)
+    assert ei.value.code == 0
+
+
+def test_sigterm_terminates_process_with_status_zero():
+    code = (
+        "import signal, sys, time\n"
+        "import main\n"
+        "signal.signal(signal.SIGTERM, main.handle_sigterm)\n"
+        "print('ready', flush=True)\n"
+        "time.sleep(30)\n"
+    )
+    env = {**os.environ, "ASKFOLIO_SKIP_DOTENV": "1"}
+    p = subprocess.Popen(
+        [sys.executable, "-c", code], stdout=subprocess.PIPE, text=True, env=env
+    )
+    assert p.stdout.readline().strip() == "ready"
+    p.terminate()
+    assert p.wait(timeout=10) == 0

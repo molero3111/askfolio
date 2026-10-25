@@ -1,6 +1,7 @@
 """Run the Telegram RAG agent: poll for updates and process with LangGraph."""
 import logging
 import os
+import signal
 import time
 
 from app import heartbeat
@@ -46,6 +47,11 @@ def configure_process() -> None:
     install_redaction([TELEGRAM_BOT_TOKEN, LLM_API_KEY, LANGSMITH_API_KEY])
     install_excepthook()
     logging.captureWarnings(True)  # route warnings.warn through the filtered handlers
+
+
+def handle_sigterm(signum, frame) -> None:
+    """Exit cleanly on SIGTERM (docker stop). Offsets are saved before processing."""
+    raise SystemExit(0)
 
 
 def startup() -> None:
@@ -96,6 +102,7 @@ def run_once(graph, state: dict, sleep=time.sleep) -> dict:
 
 def main():
     configure_process()
+    signal.signal(signal.SIGTERM, handle_sigterm)
     logger = logging.getLogger(__name__)
     logger.info(
         "LangSmith tracing: %s (manual spans only, project=%s)",

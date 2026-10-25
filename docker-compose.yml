@@ -6,13 +6,12 @@ services:
       args:
         EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
     restart: unless-stopped
+    init: true
     user: "${UID:-1000}:${GID:-1000}"
     env_file:
       - .env
     depends_on:
       - db-askfolio
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     command: ["python", "main.py"]
     volumes:
       - ./app:/app/app
