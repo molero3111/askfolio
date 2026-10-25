@@ -28,6 +28,7 @@ Use JSON sections such as:
 | **`education`** | Degrees, institutions, periods |
 | **`certifications`** | Titles, issuers, links |
 | **`work_experience`** | Roles, companies, periods, **responsibilities** |
+| **`projects`** | Name, year, URL, short description |
 
 The ingest pipeline turns each logical block into documents with metadata so search stays section-aware. Match the **shape** expected by `ingest/json_to_documents.py` (see that file for exact keys), or extend the parser if you add fields.
 
