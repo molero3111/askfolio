@@ -1,6 +1,4 @@
-import html
 import re
-import unicodedata
 
 from app.config import (
     SYSTEM_PROMPT_PATH,
@@ -8,6 +6,7 @@ from app.config import (
     TIMEZONE_SYSTEM_PROMPT_PATH,
     USER_PROMPT_PATH,
 )
+from app.text_normalize import normalize_text
 
 _TAG_RE = re.compile(
     r"<\s*(/?)\s*(profile_context|chat_history|question)\b[^>]*>",
@@ -20,15 +19,9 @@ def neutralize_tags(text: str) -> str:
     return _TAG_RE.sub(lambda m: f"[{m.group(1)}{m.group(2)}]", text)
 
 
-_INVISIBLE_RE = re.compile("[\u200b-\u200f\u2060\ufeff\u00ad]")
-
-
 def sanitize(text: str) -> str:
     """Fold look-alike/invisible/encoded forms, neutralise our tags, escape any other angle bracket."""
-    text = unicodedata.normalize("NFKC", text)
-    text = _INVISIBLE_RE.sub("", text)
-    text = html.unescape(text)
-    text = neutralize_tags(text)
+    text = neutralize_tags(normalize_text(text))
     return text.replace("<", "\u2039").replace(">", "\u203a")
 
 

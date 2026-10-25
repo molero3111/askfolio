@@ -1,12 +1,12 @@
 """Remove email addresses and phone numbers from documents before embedding."""
 
-import html
 import re
-import unicodedata
 from collections.abc import Sequence
 from urllib.parse import unquote
 
 from langchain_core.documents import Document
+
+from app.text_normalize import normalize_text
 
 REPLACEMENT = "[contact removed]"
 
@@ -20,21 +20,18 @@ _PHONE_RE = re.compile(r"(?<![\w/=.:-])\+?\(?\d[\d \t().-]{7,}\d(?![\w/-])")
 _YEAR_RE = re.compile(r"(?:19|20)\d\d")
 
 
-# Zero-width / format characters that split tokens without changing how they read.
-_INVISIBLE_RE = re.compile("[\u200b-\u200f\u2060\ufeff\u00ad]")
 _PCT_AT_TOKEN_RE = re.compile(r"\S*%40\S*", re.IGNORECASE)
 _AT_SEP = r"\s*(?:@|\[at\]|\(at\)|\bat\b)\s*"
 _DOT_SEP = r"(?:\s*(?:\.|\[dot\]|\(dot\)|\bdot\b)\s*)"
 
 
 def normalize(text: str) -> str:
-    """Fold look-alike, invisible and encoded forms so contacts match their plain spelling."""
-    text = unicodedata.normalize("NFKC", text)
-    text = _INVISIBLE_RE.sub("", text)
-    text = html.unescape(text)
+    """Shared normalisation plus the scrub-specific '%40' unquote of percent-encoded emails."""
+    text = normalize_text(text)
     if "%40" in text.lower():
         text = _PCT_AT_TOKEN_RE.sub(lambda m: unquote(m.group(0)), text)
-    return unicodedata.normalize("NFKC", _INVISIBLE_RE.sub("", text))
+        text = normalize_text(text)
+    return text
 
 
 def owner_email_pattern(value: str) -> re.Pattern[str] | None:
