@@ -116,3 +116,9 @@ def test_scheduling_rule_is_a_standalone_rule(monkeypatch):
     s = build_qa_messages("c", "h", "q")[0]["content"]
     assert '- If someone wants to schedule a meeting, call or interview, tell them to reply "schedule a meeting" to see the available times.' in s
     assert "{scheduling_rule}" not in s
+
+
+def test_language_is_decided_by_the_current_question_only():
+    s = build_qa_messages("c", "h", "q")[0]["content"]
+    assert "Decide the language from the <question> block **only**" in s
+    assert "you don't share contact numbers or email addresses" in s
