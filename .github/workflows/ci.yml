@@ -1,6 +1,6 @@
 # CI for askfolio: lint, tests and the privacy scan (test), plus a Docker image build and
 # check (image). Runs on every PR and is reused by the deploy workflow through
-# workflow_call, which checks for the job named `test`.
+# workflow_call. A redeploy requires both the `test` and the `image` job to have succeeded.
 
 name: CI
 

@@ -1,0 +1,58 @@
+# Production stack. Every host path and secret comes from the environment.
+services:
+  askfolio:
+    image: ghcr.io/molero3111/askfolio:${IMAGE_TAG:?IMAGE_TAG is required}
+    user: "10001:10001"
+    env_file: .env
+    environment:
+      POSTGRES_HOST: askfolio-db
+    restart: unless-stopped
+    mem_limit: 2g
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: ["/tmp"]
+    pids_limit: 256
+    depends_on:
+      askfolio-db:
+        condition: service_healthy
+    volumes:
+      # Directory mount: the app replaces token.json atomically.
+      - ${ASKFOLIO_STATE_DIR:?set ASKFOLIO_STATE_DIR}/secrets:/app/secrets
+      - ${ASKFOLIO_STATE_DIR:?set ASKFOLIO_STATE_DIR}/data:/app/data
+      - ${ASKFOLIO_RESOURCES_DIR:?set ASKFOLIO_RESOURCES_DIR}:/app/resources/json:ro
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    networks:
+      - askfolio
+
+  askfolio-db:
+    # Pinned by digest; bump it deliberately (docker buildx imagetools inspect pgvector/pgvector:pg17).
+    image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
+    restart: unless-stopped
+    mem_limit: 512m
+    # Postgres keeps its default capabilities (it chowns its data dir on init).
+    security_opt: ["no-new-privileges:true"]
+    # No env_file: bot token and API keys must not reach Postgres.
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - ${ASKFOLIO_DB_DIR:?set ASKFOLIO_DB_DIR}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - askfolio
+
+# Plain bridge: egress to Telegram/OpenRouter works; no ports are published.
+networks:
+  askfolio:
+    driver: bridge

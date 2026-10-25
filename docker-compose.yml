@@ -26,7 +26,8 @@ services:
       - network-askfolio
 
   db-askfolio:
-    image: pgvector/pgvector:pg17
+    # Pinned by digest; bump it deliberately (docker buildx imagetools inspect pgvector/pgvector:pg17).
+    image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
