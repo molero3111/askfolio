@@ -7,8 +7,10 @@ from app import config
 
 
 @pytest.fixture
-def reload_config():
+def reload_config(monkeypatch):
     yield lambda: importlib.reload(config)
+    # Never let the teardown reload read the developer's real .env.
+    monkeypatch.setenv("ASKFOLIO_SKIP_DOTENV", "1")
     importlib.reload(config)
 
 
@@ -40,7 +42,11 @@ def test_booking_disabled_when_env_missing(monkeypatch, reload_config):
 
 
 def test_skip_dotenv_flag_is_exposed(monkeypatch, reload_config):
+    calls = []
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: calls.append(a))
     monkeypatch.setenv("ASKFOLIO_SKIP_DOTENV", "1")
     assert reload_config().SKIP_DOTENV is True
+    assert calls == []
     monkeypatch.delenv("ASKFOLIO_SKIP_DOTENV")
     assert reload_config().SKIP_DOTENV is False
+    assert calls == [(config.PROJECT_ROOT / ".env",)]

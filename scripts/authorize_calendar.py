@@ -16,10 +16,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from dotenv import load_dotenv
-
-load_dotenv(ROOT / ".env")
-
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 from app.config import GOOGLE_CREDENTIALS_PATH, GOOGLE_TOKEN_PATH, resolve_path

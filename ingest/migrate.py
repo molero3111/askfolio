@@ -13,10 +13,6 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dotenv import load_dotenv
-
-load_dotenv(ROOT / ".env")
-
 import sqlalchemy
 from langchain_postgres import PGEngine
 
@@ -25,11 +21,9 @@ from app.config import DB_CONNECTION_URL_ASYNC, PGVECTOR_COLLECTION_NAME, VECTOR
 TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 RETRY_ATTEMPTS = 6  # 1 try + 5 retries, sleeping 1..5s (~15s)
 
-
 def valid_table_name(name: str) -> bool:
     """True if name is a plain SQL identifier (letters, digits, underscore; no leading digit)."""
     return bool(TABLE_NAME_RE.fullmatch(name or ""))
-
 
 def _is_connect_error(exc: BaseException) -> bool:
     """True for connection-refused / cannot-connect failures (not SQL errors)."""
@@ -44,7 +38,6 @@ def _is_connect_error(exc: BaseException) -> bool:
     except ImportError:
         return False
 
-
 def with_retry(fn, attempts=RETRY_ATTEMPTS, sleep=time.sleep, is_retryable=_is_connect_error):
     """Call fn(); on a connect error sleep 1, 2, 3... s and retry (~15s for 5 attempts)."""
     for attempt in range(1, attempts + 1):
@@ -55,7 +48,6 @@ def with_retry(fn, attempts=RETRY_ATTEMPTS, sleep=time.sleep, is_retryable=_is_c
                 raise
             print(f"Database not reachable ({type(e).__name__}); retry {attempt}/{attempts - 1} in {attempt}s...")
             sleep(attempt)
-
 
 def _create_extension() -> None:
     dsn = DB_CONNECTION_URL_ASYNC.replace("postgresql+asyncpg://", "postgresql://", 1)
@@ -70,7 +62,6 @@ def _create_extension() -> None:
             await conn.close()
 
     asyncio.run(_run())
-
 
 def main() -> int:
     if not DB_CONNECTION_URL_ASYNC:
@@ -113,7 +104,6 @@ def main() -> int:
 
     with_retry(_migrate)
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
