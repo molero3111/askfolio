@@ -21,12 +21,11 @@ from app.config import (
     LLM_API_URL,
     LLM_MODEL,
     LLM_REQUEST_TIMEOUT,
-    RECRUITER_PROMPT_PATH,
     TIMEZONE_ALIAS_FAST_PATH,
-    TIMEZONE_PROMPT_PATH,
     is_langsmith_enabled,
 )
 from app.conversation import ConversationState, SchedulingMode
+from app.llm_messages import build_qa_messages, build_timezone_messages
 from app.observability import traceable, tracing_context
 from app.offset import save_offset
 from app.rag import get_relevant_context
@@ -90,13 +89,13 @@ def _retrieve_context(user_input: str) -> str:
 
 
 @traceable(name="call_llm_http", run_type="llm")
-def _call_llm(prompt_content: str) -> str:
+def _call_llm(messages: list[dict]) -> str:
     headers = {"Content-Type": "application/json"}
     if LLM_API_KEY:
         headers["Authorization"] = f"Bearer {LLM_API_KEY}"
     payload = {
         "model": LLM_MODEL,
-        "messages": [{"role": "user", "content": prompt_content}],
+        "messages": messages,
     }
     r = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=LLM_REQUEST_TIMEOUT)
     r.raise_for_status()
@@ -121,8 +120,7 @@ def _resolve_timezone_llm(text: str) -> str | None:
     """
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
     try:
-        prompt = TIMEZONE_PROMPT_PATH.read_text(encoding="utf-8").format(user_input=text)
-        raw = _call_llm(prompt)
+        raw = _call_llm(build_timezone_messages(text))
         cleaned = _strip_reasoning(raw).strip()
         if not cleaned or cleaned.upper() == "UNKNOWN":
             return None
@@ -409,13 +407,8 @@ def process_message_node(state: AgentState) -> dict:
         context = _retrieve_context(user_input)
         logger.info("[process_message] retrieved context length=%s chars", len(context))
 
-        prompt_template = RECRUITER_PROMPT_PATH.read_text(encoding="utf-8")
         chat_history = _format_history(conv.history)
-        prompt_content = prompt_template.format(
-            context=context,
-            user_input=user_input,
-            chat_history=chat_history,
-        )
+        messages = build_qa_messages(context, chat_history, user_input)
         with tracing_context(
             enabled=is_langsmith_enabled(),
             project_name=LANGSMITH_PROJECT,
@@ -425,7 +418,7 @@ def process_message_node(state: AgentState) -> dict:
             },
         ):
             try:
-                raw = _call_llm(prompt_content)
+                raw = _call_llm(messages)
                 reply = _strip_reasoning(raw)
                 logger.info("[process_message] LLM reply length=%s chars", len(reply))
             except Exception as e:

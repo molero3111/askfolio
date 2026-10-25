@@ -90,7 +90,9 @@ def is_langsmith_enabled() -> bool:
 
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
-RECRUITER_PROMPT_PATH = PROMPTS_DIR / "recruiter_prompt.txt"
+SYSTEM_PROMPT_PATH = PROMPTS_DIR / "system_prompt.txt"
+USER_PROMPT_PATH = PROMPTS_DIR / "user_prompt.txt"
+TIMEZONE_SYSTEM_PROMPT_PATH = PROMPTS_DIR / "timezone_system_prompt.txt"
 TIMEZONE_PROMPT_PATH = PROMPTS_DIR / "timezone_prompt.txt"
 # When true, the alias dict in calendar_client.py acts as a fast-path before the LLM call.
 # Default false: LLM is the primary (sole) resolver for timezone input.

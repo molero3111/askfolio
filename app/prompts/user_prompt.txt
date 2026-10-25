@@ -1,0 +1,11 @@
+<chat_history>
+{chat_history}
+</chat_history>
+
+<profile_context>
+{context}
+</profile_context>
+
+<question>
+{user_input}
+</question>

@@ -55,7 +55,7 @@ resources/json/
   ├─ cv.json               — knowledge base (skills, experience, education)
   └─ github_projects.json  — repo index with descriptions and languages
 
-app/prompts/recruiter_prompt.txt — system prompt template ({chat_history}, {context}, {user_input})
+app/prompts/system_prompt.txt + user_prompt.txt (user: {chat_history}, {context}, {user_input}); app/llm_messages.py builds the message lists
 ```
 
 ### Message routing in `process_message_node`

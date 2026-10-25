@@ -282,7 +282,7 @@ Full list: [Wikipedia — tz database time zones](https://en.wikipedia.org/wiki/
 │   ├── rag.py                 # pgvector retrieval
 │   ├── telegram_client.py     # Telegram getUpdates / sendMessage
 │   └── prompts/
-│       └── recruiter_prompt.txt
+│       └── system_prompt.txt, user_prompt.txt
 ├── ingest/
 │   ├── ingest_pgvector.py     # Ingest JSON → pgvector
 │   └── json_to_documents.py
