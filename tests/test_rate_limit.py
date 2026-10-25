@@ -48,7 +48,37 @@ def test_global_day_limit_across_chats():
     assert lim.check("b") == Decision.ALLOWED
     assert lim.check("c") == Decision.ALLOWED
     assert lim.check("d") == Decision.LIMITED_NOTIFY
-    assert lim.check("e") == Decision.LIMITED_SILENT
+    assert lim.check("d") == Decision.LIMITED_SILENT
+
+
+def test_global_cap_notifies_each_chat_once():
+    lim = make_msg(FakeClock(), glob=1)
+    assert lim.check("a") == Decision.ALLOWED
+    assert lim.check("b") == Decision.LIMITED_NOTIFY
+    assert lim.check("b") == Decision.LIMITED_SILENT
+    assert lim.check("c") == Decision.LIMITED_NOTIFY
+
+
+def test_minute_window_boundary_exactly_60s():
+    clock = FakeClock()
+    lim = make_msg(clock)
+    for _ in range(5):
+        lim.check("a")
+    clock.now += 59.9
+    assert lim.check("a") == Decision.LIMITED_NOTIFY
+    clock.now = T0 + 60
+    assert lim.check("a") == Decision.ALLOWED
+
+
+def test_day_roll_drops_idle_chat_state():
+    clock = FakeClock()
+    lim = make_msg(clock)
+    for _ in range(6):
+        lim.check("idle")
+    clock.now = T0 - 3600 + DAY + 1
+    lim.check("other")
+    assert "idle" not in lim._recent
+    assert ("minute", "idle") not in lim._notified
 
 
 def test_booking_chat_cap():

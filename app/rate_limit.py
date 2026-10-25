@@ -26,7 +26,10 @@ class Decision(Enum):
 
 
 class MessageLimiter:
-    """Per-chat sliding-minute and per-day limits, plus a global daily cap."""
+    """Per-chat sliding-minute and per-day limits, plus a global daily cap.
+
+    Not thread-safe; the bot processes messages on a single thread.
+    """
 
     def __init__(
         self,
@@ -52,10 +55,19 @@ class MessageLimiter:
             self._day = day
             self._global_count = 0
             self._chat_day.clear()
-            self._notified = {k for k in self._notified if k[0] == "minute"}
+            # Bound memory: drop idle chats' deques and their minute-notify keys.
+            for chat in list(self._recent):
+                recent = self._recent[chat]
+                while recent and recent[0] <= now - _MINUTE_SECONDS:
+                    recent.popleft()
+                if not recent:
+                    del self._recent[chat]
+            self._notified = {
+                k for k in self._notified if k[0] == "minute" and k[1] in self._recent
+            }
 
     def _refuse(self, scope: str, chat_id: str) -> Decision:
-        key = (scope, "" if scope == "global" else chat_id)
+        key = (scope, chat_id)
         if key in self._notified:
             return Decision.LIMITED_SILENT
         self._notified.add(key)
