@@ -43,7 +43,7 @@ mkdir -p secrets data          # must exist before the first `docker compose up`
 
 Set `TELEGRAM_BOT_TOKEN` in `.env` (create a bot via [@BotFather](https://t.me/BotFather)), and set `POSTGRES_PASSWORD`. Compose refuses to start until it's set.
 
-The app container runs as your host user, so it can write to `secrets/` (Google token refresh) and `data/` (Telegram offset). Compose reads `UID`/`GID` from the environment and falls back to `1000:1000`. If your user isn't uid 1000, run `export UID GID` first, or add `UID=` and `GID=` to `.env`.
+The app container runs as your host user, so it can write to `secrets/` (Google token refresh) and `data/` (Telegram offset). Compose reads `UID`/`GID` from the environment and falls back to `1000:1000`. If your user isn't uid 1000, run `export UID GID=$(id -g)` first (bash has no `GID` variable), or add `UID=` and `GID=` to `.env`.
 
 ### 2. Prepare JSON
 
