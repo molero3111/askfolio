@@ -50,7 +50,11 @@ def configure_process() -> None:
 
 
 def handle_sigterm(signum, frame) -> None:
-    """Exit cleanly on SIGTERM (docker stop). Offsets are saved before processing."""
+    """Exit cleanly on SIGTERM (docker stop).
+
+    The offset is saved when a batch is fetched, so any messages of the current batch that
+    haven't been answered yet are dropped, not replayed (at-most-once delivery).
+    """
     raise SystemExit(0)
 
 
