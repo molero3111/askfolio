@@ -21,7 +21,7 @@ from app.config import (
     TELEGRAM_BOT_TOKEN,
 )
 from app.graph import build_graph
-from app.log_redact import install_redaction
+from app.log_redact import install_excepthook, install_redaction
 from app.offset import load_offset, save_offset
 from app.rag import get_vectorstore
 
@@ -42,7 +42,11 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-install_redaction([TELEGRAM_BOT_TOKEN, LLM_API_KEY])
+# Google OAuth client secret / refresh token are only read lazily from secrets/ when
+# booking runs, so they are not in memory at startup and are not listed here.
+install_redaction([TELEGRAM_BOT_TOKEN, LLM_API_KEY, LANGSMITH_API_KEY])
+install_excepthook()
+logging.captureWarnings(True)  # route warnings.warn through the filtered handlers
 
 
 def _is_langsmith_exception(exc: BaseException) -> bool:

@@ -1,6 +1,7 @@
 """Logging filter that keeps secrets (bot token, API keys) out of log output."""
 import logging
 import re
+import sys
 import traceback
 
 _TOKEN_RE = re.compile(r"bot\d+:[A-Za-z0-9_-]{30,}")
@@ -48,3 +49,18 @@ def install_redaction(secrets: list[str]) -> None:
     root.addFilter(flt)
     for handler in root.handlers:
         handler.addFilter(flt)
+
+
+def install_excepthook() -> None:
+    """Route uncaught exceptions through the (filtered) logger instead of raw stderr."""
+    default_hook = sys.excepthook
+
+    def hook(exc_type, exc, tb) -> None:
+        if issubclass(exc_type, KeyboardInterrupt):
+            default_hook(exc_type, exc, tb)
+            return
+        logging.getLogger("uncaught").critical(
+            "Uncaught exception", exc_info=(exc_type, exc, tb)
+        )
+
+    sys.excepthook = hook

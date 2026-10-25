@@ -262,3 +262,50 @@ def test_langsmith_error_resumes_from_disk_offset(monkeypatch, tmp_path):
     assert out["pending_messages"] == []
     assert out["conversations"] == {"1": {}}
     assert os.environ[main.LANGSMITH_RUNTIME_FLAG] == "false"
+
+
+LS_KEY = "lsv2_pt_" + "f" * 32
+
+
+def test_langsmith_shaped_key_is_redacted(caplog, restore_root_logging):
+    log_redact.install_redaction([LS_KEY])
+    with caplog.at_level(logging.INFO):
+        logging.getLogger("t").error("upload failed with key %s", LS_KEY)
+    assert LS_KEY not in caplog.text
+    assert "***" in caplog.text
+
+
+def test_captured_warning_is_redacted(caplog, restore_root_logging):
+    import warnings
+
+    log_redact.install_redaction([LS_KEY])
+    # importing main already enabled capture at collection time; reinstall it fresh
+    logging.captureWarnings(False)
+    logging.captureWarnings(True)
+    try:
+        with caplog.at_level(logging.WARNING):
+            # What warnings.warn() ends up calling once capture is on.
+            warnings.showwarning(
+                UserWarning(f"deprecated call with {LS_KEY} and /bot{TOKEN}/x"),
+                UserWarning,
+                "somefile.py",
+                1,
+            )
+    finally:
+        logging.captureWarnings(False)
+    assert "deprecated call" in caplog.text
+    assert LS_KEY not in caplog.text
+    assert TOKEN not in caplog.text
+
+
+def test_uncaught_exception_is_logged_redacted(caplog, restore_root_logging, monkeypatch):
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)  # restored on teardown
+    log_redact.install_redaction([LS_KEY])
+    log_redact.install_excepthook()
+    try:
+        raise RuntimeError(f"boom {LS_KEY}")
+    except RuntimeError:
+        with caplog.at_level(logging.CRITICAL):
+            sys.excepthook(*sys.exc_info())
+    assert "Uncaught exception" in caplog.text
+    assert LS_KEY not in caplog.text
