@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 telegram_offset.txt
 venv/
 __pycache__/
