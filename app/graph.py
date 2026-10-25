@@ -40,6 +40,19 @@ logger = logging.getLogger(__name__)
 RATE_LIMIT_REPLY = (
     "You're sending messages faster than I can answer. Please wait a minute and try again."
 )
+DAY_LIMIT_REPLY = (
+    "You've reached today's message limit. "
+    "Please come back tomorrow, or reach out via the links on the portfolio."
+)
+GLOBAL_LIMIT_REPLY = (
+    "I've answered as many questions as I can today. "
+    "Please try again tomorrow, or reach out via the links on the portfolio."
+)
+_LIMIT_REPLIES = {
+    "minute": RATE_LIMIT_REPLY,
+    "chat_day": DAY_LIMIT_REPLY,
+    "global": GLOBAL_LIMIT_REPLY,
+}
 BOOKING_DISABLED_REPLY = (
     "Scheduling isn't available right now. Please reach out via the links on the portfolio."
 )
@@ -53,11 +66,11 @@ _message_limiter = MessageLimiter(
 
 def _message_allowed(chat_id: int, message_id: int) -> bool:
     """Gate an LLM-backed path. Notifies once on refusal; later refusals are silent."""
-    decision = _message_limiter.check(str(chat_id))
-    if decision is Decision.ALLOWED:
+    result = _message_limiter.check(str(chat_id))
+    if result.decision is Decision.ALLOWED:
         return True
-    if decision is Decision.LIMITED_NOTIFY:
-        _send_telegram(chat_id, RATE_LIMIT_REPLY, message_id)
+    if result.decision is Decision.LIMITED_NOTIFY:
+        _send_telegram(chat_id, _LIMIT_REPLIES.get(result.scope, RATE_LIMIT_REPLY), message_id)
     return False
 
 _SCHEDULING_KEYWORDS = frozenset(
@@ -442,6 +455,10 @@ def _process_first(pending: list, conversations: dict) -> dict:
     # Route to scheduling if already in a scheduling flow or intent detected
     in_scheduling_flow = conv.mode not in (SchedulingMode.IDLE, SchedulingMode.CANCELLED)
     if in_scheduling_flow or _is_scheduling_intent(user_input):
+        if not in_scheduling_flow and not _message_allowed(chat_id, reply_to_message_id):
+            # Cheap non-LLM path, but still capped so it can't hammer the calendar API.
+            conversations[key] = conv.to_dict()
+            return {"pending_messages": pending[1:], "conversations": conversations}
         logger.info("[process_message] scheduling path (mode=%s)", conv.mode.value)
         _handle_scheduling(conv, user_input, chat_id, reply_to_message_id)
         conversations[key] = conv.to_dict()

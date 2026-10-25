@@ -9,6 +9,7 @@ import time
 from collections import defaultdict, deque
 from collections.abc import Callable
 from enum import Enum
+from typing import NamedTuple
 
 _DAY_SECONDS = 86400
 _MINUTE_SECONDS = 60
@@ -23,6 +24,12 @@ class Decision(Enum):
     ALLOWED = "allowed"
     LIMITED_NOTIFY = "limited_notify"  # first refusal in a window: tell the user
     LIMITED_SILENT = "limited_silent"  # later refusals: stay quiet
+
+
+class CheckResult(NamedTuple):
+    decision: Decision
+    # Which cap refused: "minute", "chat_day" or "global"; None when allowed.
+    scope: str | None = None
 
 
 class MessageLimiter:
@@ -66,34 +73,37 @@ class MessageLimiter:
                 k for k in self._notified if k[0] == "minute" and k[1] in self._recent
             }
 
-    def _refuse(self, scope: str, chat_id: str) -> Decision:
+    def _refuse(self, scope: str, chat_id: str) -> CheckResult:
         key = (scope, chat_id)
         if key in self._notified:
-            return Decision.LIMITED_SILENT
+            return CheckResult(Decision.LIMITED_SILENT, scope)
         self._notified.add(key)
-        return Decision.LIMITED_NOTIFY
+        return CheckResult(Decision.LIMITED_NOTIFY, scope)
 
-    def check(self, chat_id: str) -> Decision:
-        """Return the decision for one incoming message; counts it if allowed."""
+    def check(self, chat_id: str) -> CheckResult:
+        """Decide one incoming message (and which scope refused it); counts it if allowed."""
         now = self._clock()
         self._roll_day(now)
 
-        recent = self._recent[chat_id]
+        # .get so refused calls from unknown chats create no per-chat state.
+        recent = self._recent.get(chat_id)
         while recent and recent[0] <= now - _MINUTE_SECONDS:
             recent.popleft()
 
         if self._global_count >= self._global_per_day:
             return self._refuse("global", chat_id)
-        if self._chat_day[chat_id] >= self._per_day:
-            return self._refuse("day", chat_id)
-        if len(recent) >= self._per_minute:
+        if self._chat_day.get(chat_id, 0) >= self._per_day:
+            return self._refuse("chat_day", chat_id)
+        if recent is not None and len(recent) >= self._per_minute:
+            return self._refuse("minute", chat_id)
+        if self._per_minute <= 0:
             return self._refuse("minute", chat_id)
 
-        recent.append(now)
+        self._recent[chat_id].append(now)
         self._chat_day[chat_id] += 1
         self._global_count += 1
         self._notified.discard(("minute", chat_id))
-        return Decision.ALLOWED
+        return CheckResult(Decision.ALLOWED)
 
 
 class BookingDecision(Enum):

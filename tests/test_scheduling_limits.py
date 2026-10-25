@@ -72,3 +72,45 @@ def test_qa_rate_limited_notify_then_silent(monkeypatch):
     assert sent == [graph.RATE_LIMIT_REPLY]
     assert out["pending_messages"] == []
     assert out["conversations"]["1"]["history"] == []
+
+
+def test_scope_specific_replies(monkeypatch):
+    for limiter, expected in (
+        (MessageLimiter(0, 100, 100), graph.RATE_LIMIT_REPLY),
+        (MessageLimiter(100, 0, 100), graph.DAY_LIMIT_REPLY),
+        (MessageLimiter(100, 100, 0), graph.GLOBAL_LIMIT_REPLY),
+    ):
+        sent, _ = _setup(monkeypatch, limiter)
+        assert graph._message_allowed(1, 10) is False
+        assert sent == [expected]
+    assert "tomorrow" in graph.DAY_LIMIT_REPLY
+    assert "as many questions as I can today" in graph.GLOBAL_LIMIT_REPLY
+
+
+def test_scheduling_intent_in_idle_is_rate_limited(monkeypatch):
+    sent, calls = _setup(monkeypatch, MessageLimiter(0, 100, 100))
+    monkeypatch.setattr(graph, "BOOKING_ENABLED", True)
+    state = {
+        "offset": None,
+        "pending_messages": [(1, 10, "can we schedule a meeting?")],
+        "conversations": {},
+    }
+    out = graph.process_message_node(state)
+    assert calls["slots"] == 0
+    assert sent == [graph.RATE_LIMIT_REPLY]
+    assert out["pending_messages"] == []
+
+
+def test_slot_reply_inside_flow_is_not_limited(monkeypatch):
+    sent, _ = _setup(monkeypatch, MessageLimiter(0, 100, 100))
+    conv = ConversationState()
+    conv.mode = SchedulingMode.AWAITING_SLOT_SELECTION
+    conv.proposed_slots = list(SLOTS)
+    state = {
+        "offset": None,
+        "pending_messages": [(1, 10, "2")],
+        "conversations": {"1": conv.to_dict()},
+    }
+    out = graph.process_message_node(state)
+    assert out["conversations"]["1"]["mode"] != SchedulingMode.AWAITING_SLOT_SELECTION.value
+    assert graph.RATE_LIMIT_REPLY not in sent
