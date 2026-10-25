@@ -35,11 +35,17 @@ def split_contacts(values: list[str]) -> tuple[list[str], list[str]]:
 
 
 def phone_variants(digits: str) -> list[str]:
-    """Digit strings to look for: the full number, plus its national form (last 10) when longer."""
+    """Digit strings to look for: the full number plus national forms without the country code.
+
+    National numbers are 9 or 10 digits in most countries, so the last 9 and last 10 digits are
+    both checked, along with each written with a leading trunk ``0``.
+    """
     variants = [digits]
-    if len(digits) > 10:
-        variants.append(digits[-10:])
-    return variants
+    for n in (10, 9):
+        if len(digits) > n:
+            national = digits[-n:]
+            variants += [national, "0" + national]
+    return list(dict.fromkeys(variants))
 
 
 def build_queries(table: str, phone_params: int = 1) -> tuple[str, str]:

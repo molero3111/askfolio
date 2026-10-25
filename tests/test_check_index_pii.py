@@ -80,8 +80,13 @@ def test_email_candidate_key_uses_first_dot_segment():
 def test_phone_variants_adds_national_form_for_long_numbers():
     from scripts.check_index_pii import phone_variants
 
-    assert phone_variants("991234567890") == ["991234567890", "1234567890"]
-    assert phone_variants("1234567890") == ["1234567890"]
+    assert phone_variants("991234567890") == [
+        "991234567890", "1234567890", "01234567890", "234567890", "0234567890",
+    ]
+    assert phone_variants("1234567890") == ["1234567890", "234567890", "0234567890"]
+    # Fake 11-digit number: 2-digit country code + 9-digit national number.
+    assert "123456789" in phone_variants("99123456789")
+    assert "0123456789" in phone_variants("99123456789")
 
 
 def test_build_queries_one_bind_param_per_phone_variant():
