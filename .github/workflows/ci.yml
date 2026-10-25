@@ -49,6 +49,7 @@ jobs:
       - name: Privacy scan
         env:
           PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
+          REQUIRE_DENYLIST: ${{ github.event_name != 'pull_request' }}
         run: uv run python scripts/privacy_scan.py
 
   image:

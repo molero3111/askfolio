@@ -62,3 +62,23 @@ def test_main_separators_only_is_error(monkeypatch, capsys, tmp_path):
     _run_main(monkeypatch, tmp_path, " , \n ,, ")
     assert main() == 2
     assert "::error::" in capsys.readouterr().out
+
+
+def test_main_required_and_empty_is_error(monkeypatch, capsys):
+    monkeypatch.delenv("PRIVACY_DENYLIST", raising=False)
+    monkeypatch.setenv("REQUIRE_DENYLIST", "true")
+    assert main() == 2
+    assert "::error::" in capsys.readouterr().out
+
+
+def test_main_required_with_one_is_error_on_empty_string(monkeypatch, capsys):
+    monkeypatch.setenv("PRIVACY_DENYLIST", "")
+    monkeypatch.setenv("REQUIRE_DENYLIST", "1")
+    assert main() == 2
+
+
+def test_main_not_required_and_empty_is_notice(monkeypatch, capsys):
+    monkeypatch.setenv("PRIVACY_DENYLIST", "")
+    monkeypatch.setenv("REQUIRE_DENYLIST", "false")
+    assert main() == 0
+    assert "::notice::" in capsys.readouterr().out

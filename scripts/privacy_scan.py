@@ -43,6 +43,9 @@ def main() -> int:
     if raw and not terms:
         print("::error::PRIVACY_DENYLIST is set but contains no usable terms")
         return 2
+    if not terms and os.environ.get("REQUIRE_DENYLIST", "").strip().lower() in {"true", "1"}:
+        print("::error::PRIVACY_DENYLIST is required here but is empty or unset")
+        return 2
     if not terms:
         print("::notice::PRIVACY_DENYLIST not set; privacy scan skipped")
         return 0
