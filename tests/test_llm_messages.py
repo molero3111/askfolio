@@ -114,5 +114,5 @@ def test_scheduling_rule_is_a_standalone_rule(monkeypatch):
     assert "{scheduling_rule}" not in s
     monkeypatch.setattr("app.llm_messages.BOOKING_ENABLED", True)
     s = build_qa_messages("c", "h", "q")[0]["content"]
-    assert "- If someone wants to schedule a meeting, call or interview, say you can help arrange one." in s
+    assert '- If someone wants to schedule a meeting, call or interview, tell them to reply "schedule a meeting" to see the available times.' in s
     assert "{scheduling_rule}" not in s

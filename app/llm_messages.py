@@ -34,7 +34,8 @@ _HINT_BOOKING_OFF = (
 
 
 _RULE_BOOKING_ON = (
-    "If someone wants to schedule a meeting, call or interview, say you can help arrange one."
+    "If someone wants to schedule a meeting, call or interview, tell them to reply "
+    "\"schedule a meeting\" to see the available times."
 )
 _RULE_BOOKING_OFF = (
     "If someone asks to schedule a meeting, call or interview, explain that scheduling isn't "
