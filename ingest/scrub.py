@@ -39,9 +39,10 @@ def owner_email_pattern(value: str) -> re.Pattern[str] | None:
     local, sep, domain = normalize(value).strip().partition("@")
     if not (sep and local and domain):
         return None
+    local_re = _DOT_SEP.join(re.escape(part) for part in local.split("."))
     domain_re = _DOT_SEP.join(re.escape(part) for part in domain.split("."))
     return re.compile(
-        r"(?:mailto:)?(?<![A-Za-z0-9._%+-])" + re.escape(local) + _AT_SEP + domain_re,
+        r"(?:mailto:)?(?<![A-Za-z0-9._%+-])" + local_re + _AT_SEP + domain_re,
         re.IGNORECASE,
     )
 

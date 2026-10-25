@@ -55,9 +55,11 @@ def test_count_obfuscated_email_rows():
         "jane.doe&#64;example.com",
         "jane.doe＠example.com",
         "unrelated jane.doe mentioned without a domain",
+        "jane dot doe at example dot com",
+        "jane . doe @ example . com",
         "someone.else@example.com",
     ]
-    assert count_obfuscated_email_rows(rows, ["jane.doe@example.com"]) == 5
+    assert count_obfuscated_email_rows(rows, ["jane.doe@example.com"]) == 7
     assert count_obfuscated_email_rows([], ["jane.doe@example.com"]) == 0
 
 
@@ -67,3 +69,9 @@ def test_candidate_query_uses_local_part_ilike():
     assert email_local_part("Jane.Doe@example.com") == "Jane.Doe"
     sql = build_candidate_query('we"ird')
     assert '"we""ird"' in sql and "ILIKE" in sql and "$1" in sql
+
+
+def test_email_candidate_key_uses_first_dot_segment():
+    from scripts.check_index_pii import email_candidate_key
+
+    assert email_candidate_key(" jane.doe@example.com") == "jane"

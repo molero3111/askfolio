@@ -53,6 +53,11 @@ def email_local_part(email: str) -> str:
     return email.strip().partition("@")[0]
 
 
+def email_candidate_key(email: str) -> str:
+    """First dot-separated segment of the local part, so 'jane dot doe' spellings are candidates too."""
+    return email_local_part(email).split(".")[0]
+
+
 def build_candidate_query(table: str) -> str:
     t = table.replace('"', '""')
     return (
@@ -80,7 +85,7 @@ async def _count(dsn: str, table: str, emails: list[str], phones: list[str]) -> 
         # Obfuscated spellings: pull rows mentioning the local part, match in Python.
         candidates: dict[str, list[str]] = {}
         for e in emails:
-            local = email_local_part(e)
+            local = email_candidate_key(e)
             if local:
                 candidates[e] = [r[0] for r in await conn.fetch(candidate_sql, local)]
         obfuscated = sum(count_obfuscated_email_rows(rows, [e]) for e, rows in candidates.items())

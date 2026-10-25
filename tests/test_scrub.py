@@ -37,6 +37,10 @@ def test_removes_contacts(src):
         "jane.doe@exam\u00adple.com",
         "jane.doe @example.com",
         "JANE.DOE AT EXAMPLE.COM",
+        "jane dot doe at example dot com",
+        "jane . doe @ example . com",
+        "jane(dot)doe [at] example [dot] com",
+        "jane[dot]doe@example.com",
     ],
 )
 def test_removes_obfuscated_owner_email(src):
