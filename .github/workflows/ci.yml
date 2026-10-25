@@ -46,7 +46,8 @@ jobs:
       - name: Privacy scan
         env:
           PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
-          REQUIRE_DENYLIST: ${{ github.event_name != 'pull_request' }}
+          # Required everywhere except PRs from forks, which get no secrets.
+          REQUIRE_DENYLIST: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         run: uv run python scripts/privacy_scan.py
 
   image:
