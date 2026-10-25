@@ -93,3 +93,15 @@ def test_build_queries_one_bind_param_per_phone_variant():
     _, sql = build_queries("t", 2)
     assert "$1" in sql and "$2" in sql and "$3" not in sql
     assert sql.count("LIKE") == 4
+
+
+def test_main_returns_2_on_unreadable_knowledge_json(monkeypatch, tmp_path, capsys):
+    m = _setup(monkeypatch, tmp_path, {})
+    (tmp_path / "cv.json").write_text("{not json")
+    assert m.main([]) == 2
+    out = capsys.readouterr().out
+    assert out.strip() == "cannot read knowledge JSON: JSONDecodeError"
+
+    monkeypatch.setattr(m, "resolve_path", lambda _p: tmp_path / "missing.json")
+    assert m.main([]) == 2
+    assert "cannot read knowledge JSON: FileNotFoundError" in capsys.readouterr().out

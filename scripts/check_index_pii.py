@@ -123,7 +123,11 @@ def main(argv: list[str] | None = None) -> int:
         print("Postgres env missing: set POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB.")
         return 2
     kb_path = resolve_path(INGEST_KNOWLEDGE_JSON)
-    cv = json.loads(kb_path.read_text(encoding="utf-8"))
+    try:
+        cv = json.loads(kb_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"cannot read knowledge JSON: {type(exc).__name__}")
+        return 2
     emails, phones = split_contacts(contact_values(cv))
     if not emails and not phones:
         print("no contact values in knowledge JSON; nothing to check")
