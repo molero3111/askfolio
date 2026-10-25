@@ -317,7 +317,15 @@ uv run python ingest/ingest_pgvector.py
 uv run python main.py
 ```
 
-Set `.env` `POSTGRES_HOST=localhost` and `POSTGRES_PORT=5432` if running Postgres via Docker but the app on the host.
+The dev `db-askfolio` publishes no port. To reach it from the host, add a `docker-compose.override.yml` (localhost-only binding):
+
+```yaml
+services:
+  db-askfolio:
+    ports: ["127.0.0.1:5432:5432"]
+```
+
+then set `POSTGRES_HOST=localhost` and `POSTGRES_PORT=5432` in `.env`. Alternatively run the app inside the stack with `docker compose run --rm app-askfolio python main.py`.
 
 ## License
 
