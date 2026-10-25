@@ -1,9 +1,11 @@
 # Secrets and local state
-.env*
+**/.env*
 !.env.example
-token.json
-credentials.json
-secrets/
+**/token.json
+**/credentials.json
+**/secrets/
+**/*.pem
+**/*.key
 data/
 telegram_offset.txt
 
@@ -20,8 +22,8 @@ devtools/
 venv/
 .venv/
 .git/
-__pycache__/
-*.pyc
+**/__pycache__/
+**/*.pyc
 
 # Not needed in the image
 .github/
