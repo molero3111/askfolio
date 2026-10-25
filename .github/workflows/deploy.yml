@@ -160,9 +160,10 @@ jobs:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
+          umask 077
           install -m 700 -d ~/.ssh
+          install -m 600 /dev/null ~/.ssh/id_ed25519
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
@@ -177,7 +178,7 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           set +e
-          printf '%s' "$GITHUB_TOKEN" | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "deploy@${DEPLOY_HOST}" "askfolio $DEPLOY_SHA"
+          printf '%s' "$GITHUB_TOKEN" | ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes "deploy@${DEPLOY_HOST}" "askfolio $DEPLOY_SHA"
           rc=$?
           set -e
           case "$rc" in
