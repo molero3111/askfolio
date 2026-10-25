@@ -1,6 +1,7 @@
 import re
 
 from app.config import (
+    BOOKING_ENABLED,
     SYSTEM_PROMPT_PATH,
     TIMEZONE_PROMPT_PATH,
     TIMEZONE_SYSTEM_PROMPT_PATH,
@@ -25,8 +26,33 @@ def sanitize(text: str) -> str:
     return text.replace("<", "\u2039").replace(">", "\u203a")
 
 
+_HINT_BOOKING_ON = "the profile links (such as LinkedIn and GitHub) and offer to schedule a meeting."
+_HINT_BOOKING_OFF = (
+    "the profile links (LinkedIn, GitHub, portfolio). "
+    "Meeting scheduling isn't available through this assistant."
+)
+
+
+_RULE_BOOKING_ON = (
+    "If someone wants to schedule a meeting, call or interview, tell them to reply "
+    "\"schedule a meeting\" to see the available times."
+)
+_RULE_BOOKING_OFF = (
+    "If someone asks to schedule a meeting, call or interview, explain that scheduling isn't "
+    "available through this assistant and point them to the profile links (LinkedIn, GitHub, portfolio)."
+)
+
+
 def build_qa_messages(context: str, chat_history: str, user_input: str) -> list[dict]:
-    system = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    hint = _HINT_BOOKING_ON if BOOKING_ENABLED else _HINT_BOOKING_OFF
+    rule = _RULE_BOOKING_ON if BOOKING_ENABLED else _RULE_BOOKING_OFF
+    # replace(), not format(): the system prompt is free text that may contain braces.
+    system = (
+        SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        .strip()
+        .replace("{scheduling_hint}", hint)
+        .replace("{scheduling_rule}", rule)
+    )
     user = USER_PROMPT_PATH.read_text(encoding="utf-8").format(
         context=sanitize(context),
         chat_history=sanitize(chat_history),

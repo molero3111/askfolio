@@ -3,6 +3,8 @@ services:
   askfolio:
     image: ghcr.io/molero3111/askfolio:${IMAGE_TAG:?IMAGE_TAG is required}
     user: "10001:10001"
+    # PID 1 reaper/forwarder: SIGTERM reaches Python instead of waiting out the stop timeout.
+    init: true
     env_file: .env
     environment:
       POSTGRES_HOST: askfolio-db

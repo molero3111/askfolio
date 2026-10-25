@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 from urllib.parse import quote
 
+from dotenv import load_dotenv
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -18,6 +20,12 @@ def _env(key: str, default: str = "") -> str:
 def _env_bool(key: str, default: bool = False) -> bool:
     val = _env(key, "true" if default else "false").strip().lower()
     return val in {"1", "true", "yes", "on"}
+
+
+# Tests set ASKFOLIO_SKIP_DOTENV=1 so a developer's real .env is never loaded.
+SKIP_DOTENV = _env_bool("ASKFOLIO_SKIP_DOTENV")
+if not SKIP_DOTENV:
+    load_dotenv(PROJECT_ROOT / ".env")
 
 
 def _postgres_dsn() -> str:
@@ -63,7 +71,6 @@ VECTOR_SIZE = int(_env("VECTOR_SIZE", "384"))
 EMBEDDING_MODEL = _env("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 CHUNK_SIZE = int(_env("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(_env("CHUNK_OVERLAP", "50"))
-PDF_DIR = _env("PDF_DIR", "./resources/pdfs")
 # JSON sources for vector ingest (paths relative to project root unless absolute)
 INGEST_KNOWLEDGE_JSON = _env(
     "INGEST_KNOWLEDGE_JSON",

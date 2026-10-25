@@ -1,11 +1,8 @@
 """Run the Telegram RAG agent: poll for updates and process with LangGraph."""
 import logging
 import os
+import signal
 import time
-
-from dotenv import load_dotenv
-
-load_dotenv()
 
 from app import heartbeat
 from app.config import (
@@ -37,16 +34,28 @@ else:
     os.environ["LANGSMITH_TRACING"] = "false"
     os.environ[LANGSMITH_RUNTIME_FLAG] = "false"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-# Google OAuth client secret / refresh token are only read lazily from secrets/ when
-# booking runs, so they are not in memory at startup and are not listed here.
-install_redaction([TELEGRAM_BOT_TOKEN, LLM_API_KEY, LANGSMITH_API_KEY])
-install_excepthook()
-logging.captureWarnings(True)  # route warnings.warn through the filtered handlers
+
+def configure_process() -> None:
+    """Install logging, secret redaction and the excepthook. Called once from main()."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    # Google OAuth client secret / refresh token are only read lazily from secrets/ when
+    # booking runs, so they are not in memory at startup and are not listed here.
+    install_redaction([TELEGRAM_BOT_TOKEN, LLM_API_KEY, LANGSMITH_API_KEY])
+    install_excepthook()
+    logging.captureWarnings(True)  # route warnings.warn through the filtered handlers
+
+
+def handle_sigterm(signum, frame) -> None:
+    """Exit cleanly on SIGTERM (docker stop).
+
+    The offset is saved when a batch is fetched, so any messages of the current batch that
+    haven't been answered yet are dropped, not replayed (at-most-once delivery).
+    """
+    raise SystemExit(0)
 
 
 def startup() -> None:
@@ -96,6 +105,8 @@ def run_once(graph, state: dict, sleep=time.sleep) -> dict:
 
 
 def main():
+    configure_process()
+    signal.signal(signal.SIGTERM, handle_sigterm)
     logger = logging.getLogger(__name__)
     logger.info(
         "LangSmith tracing: %s (manual spans only, project=%s)",

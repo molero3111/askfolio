@@ -12,7 +12,8 @@ A Telegram bot that answers recruiter-style questions using **RAG** over **pgvec
   - Slots are shown in **Eastern Time** by default. Recruiter can request any other timezone ("show in Pacific Time", "convert to CET") and the bot re-displays them converted.
   - Recruiter picks a slot number → bot asks for name and email → creates the Google Calendar event and emails the invite automatically.
   - Recruiter can cancel at any point with words like "cancel", "never mind", "no thanks".
-- **LLM**: **Ollama** on the host (recommended for local dev), or any **OpenAI-compatible** HTTP API (cloud).
+- **LLM**: [OpenRouter](https://openrouter.ai/) by default, with optional fallback models; any other OpenAI-compatible endpoint works too.
+- **Rate limits**: per-chat and global message caps, plus booking caps (see [Rate limits](#rate-limits)).
 
 ## CV data (`resources/json/cv.json`)
 
@@ -48,23 +49,26 @@ The app container runs as your host user, so it can write to `secrets/` (Google 
 ### 2. Prepare JSON
 
 - Add or edit **`resources/json/cv.json`** with your profile (sections above).
-- Add **`resources/json/github_projects.json`** (e.g. run `python scripts/fetch_github_projects.py` with `GITHUB_TOKEN` set to avoid rate limits).
+- Add **`resources/json/github_projects.json`** (e.g. run `uv run python scripts/fetch_github_projects.py` with `GITHUB_TOKEN` set to avoid rate limits).
 - Optional: set `INGEST_KNOWLEDGE_JSON` / `INGEST_GITHUB_JSON` in `.env` for custom paths.
 
-### 3. Local LLM: Ollama (recommended)
+### 3. LLM: OpenRouter (default)
 
-Install [Ollama](https://ollama.com/) on the host, pull a model (e.g. `ollama pull qwen2.5:14b`), and keep the service running (`systemctl enable --now ollama` on Linux).
+The bot calls an OpenAI-compatible chat completions endpoint over plain HTTP. OpenRouter is the default; set these in `.env`:
 
-- Default API URL points at **`http://host.docker.internal:11434/v1/chat/completions`** (Ollama's OpenAI-compatible endpoint).
-- Set **`LLM_MODEL`** to the Ollama model tag (e.g. `qwen2.5:14b`).
-- Leave **`LLM_API_KEY`** empty for local Ollama.
-- If the app runs in Docker, Ollama must listen beyond localhost: set `OLLAMA_HOST=0.0.0.0:11434` in the Ollama systemd override.
+| Var | Purpose |
+|-----|---------|
+| `LLM_API_URL` | Chat completions URL (default `https://openrouter.ai/api/v1/chat/completions`) |
+| `LLM_MODEL` | **Required.** OpenRouter model ID; the bot exits at startup if empty |
+| `LLM_FALLBACK_MODELS` | Comma-separated model IDs tried in order if the primary fails |
+| `LLM_API_KEY` | Your OpenRouter API key |
+| `LLM_DATA_COLLECTION` | `deny` (default) skips providers that may train on prompts |
 
-Other OpenAI-compatible servers (different host/port) work too: set `LLM_API_URL` and `LLM_MODEL` accordingly.
+Any other OpenAI-compatible endpoint (for example a local Ollama) works by overriding `LLM_API_URL`. The OpenRouter-specific `provider` field and the attribution fields (`LLM_APP_URL`, `LLM_APP_NAME`) are only sent to `openrouter.ai`.
 
 ### 4. Google Calendar integration (optional — for meeting scheduling)
 
-Scheduling is **opt-in**: the bot works fine without it. To enable it, follow these steps once.
+Scheduling is **opt-in** and off by default: the bot works fine without it. To enable it, follow these steps once, then set **`BOOKING_ENABLED=true`** in `.env`. While it is false, every message goes to the Q&A path and the assistant says scheduling isn't available.
 
 #### 4a. Google Cloud Console setup
 
@@ -110,21 +114,27 @@ CALENDAR_SLOT_DURATION_MINUTES=60
 CALENDAR_WORKING_HOURS_START=9
 CALENDAR_WORKING_HOURS_END=18
 CALENDAR_DAYS_AHEAD=7
+BOOKING_ENABLED=true                  # master switch; default false
 ```
 
 `CALENDAR_TIMEZONE` must be a valid IANA key (e.g. `America/Argentina/Buenos_Aires`, `Europe/Madrid`). `CALENDAR_DISPLAY_TIMEZONE` controls how slot times appear to recruiters; they can always ask the bot to convert to their preferred timezone.
 
-### 5. Start the stack
+### 5. Start the stack and ingest
+
+Order matters: starting the app before the vector table exists makes it crash-loop.
 
 ```bash
-docker compose up --build -d
+mkdir -p secrets data                                           # 1. directories
+cp .env.example .env                                            # 2. then edit .env
+docker compose up -d db-askfolio                                # 3. database only
+docker compose run --rm app-askfolio python -m ingest.migrate   # 4. create extension + table
+docker compose run --rm app-askfolio python ingest/ingest_pgvector.py   # 5. ingest
+docker compose up -d --build                                    # 6. start the bot
 ```
 
-### 6. Ingest into pgvector (one-off, after DB is up)
+`python -m ingest.migrate` is idempotent: it creates the pgvector extension and the vector table, and never deletes or embeds anything.
 
-```bash
-docker compose run --rm app-askfolio python ingest/ingest_pgvector.py
-```
+Ingest options:
 
 - **Default:** Deletes all existing vectors in the collection table, then ingests fresh.
 - **`--append`:** Skip the delete step (can duplicate if run twice).
@@ -189,15 +199,29 @@ A calendar invite has been sent to jane@company.com.
 
 **Cancellation:** At any point, saying "cancel", "never mind", "no thanks", etc. exits the flow gracefully.
 
-## LLM configuration summary
+## LLM configuration notes
 
-| Setup | `LLM_API_URL` (example) | `LLM_MODEL` | `LLM_API_KEY` |
-|-------|---------------------------|-------------|---------------|
-| **Ollama (Docker app → host)** | `http://host.docker.internal:11434/v1/chat/completions` | e.g. `qwen2.5:14b` | empty |
-| **Ollama (app on host)** | `http://127.0.0.1:11434/v1/chat/completions` | same as `ollama list` | empty |
-| **Cloud (OpenAI, DeepSeek, …)** | Provider chat completions URL | Provider model id | API key |
+`LLM_REQUEST_TIMEOUT` defaults to 60 seconds; raise it for slow self-hosted models. Use **`RAG_TOP_K`** to control how many chunks are passed into the prompt (default 20).
 
-Use **`LLM_REQUEST_TIMEOUT`** for slow local models (default 600s). Use **`RAG_TOP_K`** to control how many chunks are passed into the prompt (default 20).
+## Rate limits
+
+In-memory limits (reset on restart; day windows are UTC calendar days). A message over a limit gets one notice, then is ignored silently.
+
+| Var | Scope |
+|-----|-------|
+| `RATE_LIMIT_PER_CHAT_PER_MINUTE` | Messages per chat in any sliding 60 seconds (default 5) |
+| `RATE_LIMIT_PER_CHAT_PER_DAY` | Messages per chat per UTC day (default 50) |
+| `RATE_LIMIT_GLOBAL_PER_DAY` | Messages across all chats per UTC day (default 45). It counts messages, not upstream requests, so keep it under your provider's daily cap with headroom |
+| `RATE_LIMIT_BOOKINGS_PER_CHAT_PER_DAY` | Meetings one chat can book per UTC day (default 1) |
+| `RATE_LIMIT_BOOKINGS_GLOBAL_PER_DAY` | Meetings booked across all chats per UTC day (default 5) |
+
+## Health and operations
+
+- **Heartbeat:** the bot touches `HEARTBEAT_FILE` (default `/tmp/heartbeat`) after startup and after each successful poll cycle.
+- **Healthcheck:** `python -m app.healthcheck` exits 0 while the heartbeat is fresh and 1 otherwise. The production compose uses it as the container healthcheck.
+- **Shutdown:** the app exits with status 0 on SIGTERM, and the compose files run it with `init: true` so the signal reaches Python.
+- **Privacy check:** `uv run python scripts/check_index_pii.py` fails (exit 1) if the owner's email or phone from the knowledge JSON is still present in the vector table. It prints only match counts, never the values.
+- **Production compose:** `deploy/compose.yml` is the production stack. It pulls the app image from GHCR (`IMAGE_TAG`), takes host paths from `ASKFOLIO_*` env vars (`ASKFOLIO_STATE_DIR`, `ASKFOLIO_RESOURCES_DIR`, `ASKFOLIO_DB_DIR`), and runs the app read-only with all capabilities dropped. CI and deploy live in `.github/workflows`.
 
 ## LangSmith tracing (optional)
 
@@ -236,27 +260,6 @@ What gets traced:
 
 ## Troubleshooting
 
-### `ConnectTimeout` / `host.docker.internal:11434`
-
-The app container talks to Ollama on the **host**. A timeout usually means Ollama only listens on `127.0.0.1`.
-
-1. **Bind Ollama on all interfaces** (Linux systemd):
-   ```bash
-   sudo systemctl edit ollama.service
-   ```
-   Add:
-   ```ini
-   [Service]
-   Environment="OLLAMA_HOST=0.0.0.0:11434"
-   ```
-   Then: `sudo systemctl daemon-reload && sudo systemctl restart ollama`
-2. On the **host**: `curl -sS http://127.0.0.1:11434/api/tags`
-3. From the **app container**:
-   ```bash
-   docker compose exec app-askfolio python -c \
-     "import urllib.request; urllib.request.urlopen('http://host.docker.internal:11434/api/tags', timeout=5).read()"
-   ```
-
 ### `ZoneInfoNotFoundError` for `CALENDAR_TIMEZONE`
 
 Use a full IANA timezone key. Common examples:
@@ -276,6 +279,9 @@ Full list: [Wikipedia — tz database time zones](https://en.wikipedia.org/wiki/
 ```
 ├── app/
 │   ├── config.py              # Settings from env
+│   ├── llm_client.py          # OpenRouter-aware chat completions client
+│   ├── rate_limit.py          # In-memory message and booking limiters
+│   ├── healthcheck.py         # Container healthcheck (reads the heartbeat)
 │   ├── graph.py               # LangGraph: get_telegram_updates → process_message
 │   ├── conversation.py        # ConversationState, SchedulingMode (state machine types)
 │   ├── calendar_client.py     # Google Calendar: slot fetching, meeting creation, tz resolution
@@ -285,14 +291,17 @@ Full list: [Wikipedia — tz database time zones](https://en.wikipedia.org/wiki/
 │       └── system_prompt.txt, user_prompt.txt
 ├── ingest/
 │   ├── ingest_pgvector.py     # Ingest JSON → pgvector
+│   ├── migrate.py             # Idempotent schema setup
 │   └── json_to_documents.py
 ├── resources/
 │   └── json/                  # cv.json, github_projects.json
 ├── scripts/
 │   ├── authorize_calendar.py  # One-time Google OAuth — run locally to generate secrets/token.json
+│   ├── check_index_pii.py     # Fail if owner contact data is in the index
 │   └── fetch_github_projects.py
+├── deploy/compose.yml         # Production stack (GHCR image)
 ├── main.py
-├── docker-compose.yml
+├── docker-compose.yml         # Dev stack
 └── Dockerfile
 ```
 
@@ -303,11 +312,20 @@ The database uses the **official [pgvector/pgvector](https://hub.docker.com/r/pg
 ```bash
 uv sync
 docker compose up db-askfolio -d          # Postgres only
+uv run python -m ingest.migrate
 uv run python ingest/ingest_pgvector.py
 uv run python main.py
 ```
 
-Set `.env` `POSTGRES_HOST=localhost` and `POSTGRES_PORT=5432` if running Postgres via Docker but the app on the host. Point `LLM_API_URL` at `http://127.0.0.1:11434/v1/chat/completions` for local Ollama.
+The dev `db-askfolio` publishes no port. To reach it from the host, add a `docker-compose.override.yml` (localhost-only binding):
+
+```yaml
+services:
+  db-askfolio:
+    ports: ["127.0.0.1:5432:5432"]
+```
+
+then set `POSTGRES_HOST=localhost` and `POSTGRES_PORT=5432` in `.env`. Alternatively run the app inside the stack with `docker compose run --rm app-askfolio python main.py`.
 
 ## License
 
