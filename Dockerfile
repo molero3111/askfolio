@@ -20,7 +20,7 @@ COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 
 # Bake the embedding model into the image, then run offline
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('$EMBEDDING_MODEL')" \
+RUN python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ['EMBEDDING_MODEL'])" \
     && chmod -R a+rX /opt/models
 ENV HF_HUB_OFFLINE=1
 
