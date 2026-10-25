@@ -8,6 +8,11 @@ services:
       POSTGRES_HOST: askfolio-db
     restart: unless-stopped
     mem_limit: 2g
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: ["/tmp"]
+    pids_limit: 256
     depends_on:
       askfolio-db:
         condition: service_healthy
@@ -29,6 +34,8 @@ services:
     image: pgvector/pgvector:pg17
     restart: unless-stopped
     mem_limit: 512m
+    # Postgres keeps its default capabilities (it chowns its data dir on init).
+    security_opt: ["no-new-privileges:true"]
     # No env_file: bot token and API keys must not reach Postgres.
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
