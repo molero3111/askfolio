@@ -4,7 +4,6 @@ from collections.abc import Sequence
 from datetime import UTC
 from typing import TypedDict
 
-import requests
 from langgraph.graph import END, START, StateGraph
 
 from app.calendar_client import (
@@ -17,14 +16,12 @@ from app.calendar_client import (
 from app.config import (
     CALENDAR_DISPLAY_TIMEZONE,
     LANGSMITH_PROJECT,
-    LLM_API_KEY,
-    LLM_API_URL,
     LLM_MODEL,
-    LLM_REQUEST_TIMEOUT,
     TIMEZONE_ALIAS_FAST_PATH,
     is_langsmith_enabled,
 )
 from app.conversation import ConversationState, SchedulingMode
+from app.llm_client import LLMCreditExhausted, LLMError, LLMResult, chat  # noqa: F401
 from app.llm_messages import build_qa_messages, build_timezone_messages
 from app.observability import traceable, tracing_context
 from app.offset import save_offset
@@ -83,6 +80,12 @@ class AgentState(TypedDict):
     conversations: dict
 
 
+UNAVAILABLE_REPLY = (
+    "Sorry, I'm temporarily unavailable. Please try again later."
+)
+ERROR_REPLY = "Sorry, there was an error. I couldn't process that."
+
+
 @traceable(name="retrieve_context", run_type="retriever")
 def _retrieve_context(user_input: str) -> str:
     return get_relevant_context(user_input)
@@ -90,16 +93,7 @@ def _retrieve_context(user_input: str) -> str:
 
 @traceable(name="call_llm_http", run_type="llm")
 def _call_llm(messages: list[dict]) -> str:
-    headers = {"Content-Type": "application/json"}
-    if LLM_API_KEY:
-        headers["Authorization"] = f"Bearer {LLM_API_KEY}"
-    payload = {
-        "model": LLM_MODEL,
-        "messages": messages,
-    }
-    r = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=LLM_REQUEST_TIMEOUT)
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"].strip()
+    return chat(messages).content
 
 
 @traceable(name="telegram_send_message", run_type="tool")
@@ -141,7 +135,7 @@ def _resolve_timezone_llm(text: str) -> str | None:
                 pass
         logger.warning("[timezone_llm] LLM response not a valid IANA key for input=%r: %r", text, cleaned)
         return None
-    except requests.exceptions.RequestException:
+    except LLMError:
         logger.exception("[timezone_llm] LLM request failed for input=%r", text)
         return None
     except Exception:
@@ -421,20 +415,12 @@ def process_message_node(state: AgentState) -> dict:
                 raw = _call_llm(messages)
                 reply = _strip_reasoning(raw)
                 logger.info("[process_message] LLM reply length=%s chars", len(reply))
+            except LLMCreditExhausted:
+                reply = UNAVAILABLE_REPLY
+                logger.error("[process_message] LLM credit limit reached")
             except Exception as e:
-                reply = "Sorry, there was an error. I couldn't process that."
+                reply = ERROR_REPLY
                 logger.exception("[process_message] LLM request failed: %s", e)
-                if isinstance(
-                    e,
-                    (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError),
-                ):
-                    logger.error(
-                        "[process_message] Cannot reach LLM at %s. "
-                        "If Ollama is on the host and the app runs in Docker, bind Ollama on all interfaces "
-                        "(e.g. set OLLAMA_HOST=0.0.0.0:11434 for the Ollama service, restart Ollama), "
-                        "then check on the host: curl -sS http://127.0.0.1:11434/api/tags",
-                        LLM_API_URL,
-                    )
             _send_telegram(chat_id, reply, reply_to_message_id)
 
     conv.add_message("user", user_input)

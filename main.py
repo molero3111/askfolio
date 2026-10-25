@@ -14,6 +14,7 @@ from app.config import (
     LANGSMITH_ENDPOINT,
     LANGSMITH_PROJECT,
     LANGSMITH_RUNTIME_FLAG,
+    LLM_MODEL,
     POLL_INTERVAL_SECONDS,
     TELEGRAM_BOT_TOKEN,
 )
@@ -60,6 +61,8 @@ def main():
     )
     if not TELEGRAM_BOT_TOKEN:
         raise SystemExit("Set TELEGRAM_BOT_TOKEN in .env")
+    if not LLM_MODEL:
+        raise SystemExit("Set LLM_MODEL in .env (e.g. an OpenRouter model ID)")
     graph = build_graph()
     state: dict = {"offset": load_offset(), "pending_messages": [], "conversations": {}}
     while True:
