@@ -76,7 +76,7 @@ INGEST_GITHUB_JSON = _env(
 # How many vector chunks to retrieve per question (higher = more repos/context; default 20)
 RAG_TOP_K = int(_env("RAG_TOP_K", "20"))
 # Seconds to sleep after each poll cycle (getUpdates is long-polling with timeout; this is extra delay between cycles)
-POLL_INTERVAL_SECONDS = int(_env("POLL_INTERVAL_SECONDS", "300"))  # 5 minutes
+POLL_INTERVAL_SECONDS = int(_env("POLL_INTERVAL_SECONDS", "0"))
 # getUpdates long-poll timeout (request blocks up to this many seconds for new updates)
 GET_UPDATES_TIMEOUT = int(_env("GET_UPDATES_TIMEOUT", "60"))
 

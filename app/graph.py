@@ -4,8 +4,10 @@ from collections.abc import Sequence
 from datetime import UTC
 from typing import TypedDict
 
+import requests
 from langgraph.graph import END, START, StateGraph
 
+from app import heartbeat
 from app.calendar_client import (
     create_meeting,
     format_slot_label,
@@ -126,7 +128,10 @@ def _call_llm(messages: list[dict]) -> str:
 
 @traceable(name="telegram_send_message", run_type="tool")
 def _send_telegram(chat_id: int, reply: str, reply_to_message_id: int) -> None:
-    send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+    try:
+        send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
+    except requests.RequestException as exc:
+        logger.warning("[telegram] sendMessage failed (chat_id=%s): %s", chat_id, exc)
 
 
 _IANA_KEY_RE = re.compile(r"[A-Za-z]+(?:[_/][A-Za-z_]+)+")
@@ -396,6 +401,7 @@ def get_telegram_updates_node(state: AgentState) -> dict:
 
 def process_message_node(state: AgentState) -> dict:
     """Node: process the first pending message — scheduling state machine or LLM Q&A."""
+    heartbeat.touch()
     pending = list(state.get("pending_messages") or [])
     if not pending:
         logger.info("[process_message] no pending messages, skipping")

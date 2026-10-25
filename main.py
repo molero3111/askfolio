@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from app import heartbeat
 from app.config import (
     LANGSMITH_API_KEY,
     LANGSMITH_ENABLED,
@@ -20,6 +21,7 @@ from app.config import (
 )
 from app.graph import build_graph
 from app.offset import load_offset, save_offset
+from app.rag import get_vectorstore
 
 if LANGSMITH_ENABLED:
     # Disable global auto-tracing (LangGraph node-level noise on empty polls).
@@ -52,6 +54,38 @@ def _is_langsmith_exception(exc: BaseException) -> bool:
     return _is_langsmith_exception(cause)
 
 
+def startup() -> None:
+    """Validate config, prove the DB and embedding model work, then mark alive."""
+    if not TELEGRAM_BOT_TOKEN:
+        raise SystemExit("Set TELEGRAM_BOT_TOKEN in .env")
+    if not LLM_MODEL:
+        raise SystemExit("Set LLM_MODEL in .env (e.g. an OpenRouter model ID)")
+    get_vectorstore()
+    heartbeat.touch()
+
+
+def run_once(graph, state: dict, sleep=time.sleep) -> dict:
+    """Run one poll cycle. Never raises: on failure sleep 5s and keep the old state."""
+    logger = logging.getLogger(__name__)
+    try:
+        new_state = graph.invoke(state)
+    except Exception as exc:
+        if _is_langsmith_exception(exc):
+            logger.warning(
+                "LangSmith tracing error detected; disabling tracing and continuing. Error: %s",
+                exc,
+            )
+            os.environ[LANGSMITH_RUNTIME_FLAG] = "false"
+            return state
+        logger.exception("Poll cycle failed; retrying in 5s")
+        sleep(5)
+        return state
+    if new_state.get("offset") is not None:
+        save_offset(new_state["offset"])
+    heartbeat.touch()
+    return new_state
+
+
 def main():
     logger = logging.getLogger(__name__)
     logger.info(
@@ -59,27 +93,13 @@ def main():
         "enabled" if LANGSMITH_ENABLED else "disabled",
         LANGSMITH_PROJECT,
     )
-    if not TELEGRAM_BOT_TOKEN:
-        raise SystemExit("Set TELEGRAM_BOT_TOKEN in .env")
-    if not LLM_MODEL:
-        raise SystemExit("Set LLM_MODEL in .env (e.g. an OpenRouter model ID)")
+    startup()
     graph = build_graph()
     state: dict = {"offset": load_offset(), "pending_messages": [], "conversations": {}}
     while True:
-        try:
-            state = graph.invoke(state)
-        except Exception as exc:
-            if _is_langsmith_exception(exc):
-                logger.warning(
-                    "LangSmith tracing error detected; disabling tracing and continuing. Error: %s",
-                    exc,
-                )
-                os.environ[LANGSMITH_RUNTIME_FLAG] = "false"
-                continue
-            raise
-        if state.get("offset") is not None:
-            save_offset(state["offset"])
-        time.sleep(POLL_INTERVAL_SECONDS)
+        state = run_once(graph, state)
+        if POLL_INTERVAL_SECONDS:
+            time.sleep(POLL_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":
