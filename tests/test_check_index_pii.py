@@ -43,3 +43,27 @@ def test_main_returns_2_on_db_error_and_prints_class_only(monkeypatch, tmp_path,
     assert m.main([]) == 2
     out = capsys.readouterr().out
     assert "ConnectionRefusedError" in out and "secret" not in out
+
+
+def test_count_obfuscated_email_rows():
+    from scripts.check_index_pii import count_obfuscated_email_rows
+
+    rows = [
+        "reach jane.doe at example dot com",
+        "jane.doe [at] example.com",
+        "jane.doe%40example.com",
+        "jane.doe&#64;example.com",
+        "jane.doe＠example.com",
+        "unrelated jane.doe mentioned without a domain",
+        "someone.else@example.com",
+    ]
+    assert count_obfuscated_email_rows(rows, ["jane.doe@example.com"]) == 5
+    assert count_obfuscated_email_rows([], ["jane.doe@example.com"]) == 0
+
+
+def test_candidate_query_uses_local_part_ilike():
+    from scripts.check_index_pii import build_candidate_query, email_local_part
+
+    assert email_local_part("Jane.Doe@example.com") == "Jane.Doe"
+    sql = build_candidate_query('we"ird')
+    assert '"we""ird"' in sql and "ILIKE" in sql and "$1" in sql
