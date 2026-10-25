@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+
 import sqlalchemy
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_postgres import PGEngine, PGVectorStore
@@ -30,9 +31,11 @@ from ingest.json_to_documents import (
 )
 from ingest.scrub import contact_values, scrub_documents
 
+
 def _resolve_path(p: str) -> Path:
     path = Path(p)
     return path if path.is_absolute() else ROOT / path
+
 
 def _clear_collection_rows() -> None:
     """Delete all rows from the vector table (keeps table/schema)."""
@@ -48,6 +51,7 @@ def _clear_collection_rows() -> None:
             await conn.close()
 
     asyncio.run(_run())
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -142,6 +146,7 @@ def main():
     )
     vs.add_documents(chunks)
     print("Ingestion complete.")
+
 
 if __name__ == "__main__":
     main()
