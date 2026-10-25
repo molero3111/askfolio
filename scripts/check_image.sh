@@ -36,15 +36,14 @@ fi
 # accepted, anything else, or a missing sentinel, fails. Only *.pem/*.key are excluded, and
 # only under paths that legitimately hold public CA material: Python package dirs
 # (/opt/venv, /usr/local/lib/python*, /usr/lib/python3*: certifi/pip CA bundles, test
-# fixtures), the system CA store (/etc/ssl/certs, /usr/lib/ssl, /usr/share/ca-certificates)
-# and the uv cache (/root/.cache/uv: certifi copy). Every other name is searched everywhere.
+# fixtures), the system CA store (/etc/ssl/certs, /usr/lib/ssl, /usr/share/ca-certificates).
+# Every other name is searched everywhere.
 out=$(docker run --rm --user 0 --entrypoint "" "$IMAGE" sh -c "find / \\( -path /proc -o -path /sys -o -path /dev \\) -prune -o \\( \\
     -name token.json -o -name credentials.json \\
     -o \\( -name '.env*' ! -name .env.example \\) \\
     -o \\( \\( -name '*.pem' -o -name '*.key' \\) \\
         ! -path '/opt/venv/*' ! -path '/usr/local/lib/python*' ! -path '/usr/lib/python3*' \\
-        ! -path '/etc/ssl/certs/*' ! -path '/usr/lib/ssl/*' ! -path '/usr/share/ca-certificates/*' \\
-        ! -path '/root/.cache/uv/*' \\) \\
+        ! -path '/etc/ssl/certs/*' ! -path '/usr/lib/ssl/*' ! -path '/usr/share/ca-certificates/*' \\) \\
     -o -name 'id_rsa*' -o -name cv.json -o -name github_projects.json \\
     -o -path '*/secrets/*' \\) -print 2>/dev/null; echo __rc=\$?")
 docker_rc=$?

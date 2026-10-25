@@ -16,6 +16,7 @@ ARG EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 ENV EMBEDDING_MODEL=$EMBEDDING_MODEL
 
 # Dependencies first so this layer is cached until the lockfile changes
+ENV UV_NO_CACHE=1
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 
