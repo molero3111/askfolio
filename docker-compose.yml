@@ -3,9 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: app-askfolio
-    container_name: app-askfolio
+      args:
+        EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
     restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
     env_file:
       - .env
     depends_on:
@@ -14,30 +15,31 @@ services:
       - "host.docker.internal:host-gateway"
     command: ["python", "main.py"]
     volumes:
-      - .:/app
+      - ./app:/app/app
+      - ./ingest:/app/ingest
+      - ./scripts:/app/scripts
+      - ./main.py:/app/main.py
+      - ./secrets:/app/secrets
+      - ./data:/app/data
+      - ./resources/json:/app/resources/json:ro
     networks:
       - network-askfolio
 
   db-askfolio:
-    image: pgvector/pgvector:pg15
-    container_name: db-askfolio
+    image: pgvector/pgvector:pg17
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-askfolio_db}
-      POSTGRES_USER: ${POSTGRES_USER:-askfolio_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-askfolio_pass}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - askfolio_pg17_data:/var/lib/postgresql/data
     networks:
       - network-askfolio
 
 volumes:
-  postgres_data:
-    name: askfolio_postgres_data
+  askfolio_pg17_data:
 
 networks:
   network-askfolio:
-    name: network-askfolio
     driver: bridge

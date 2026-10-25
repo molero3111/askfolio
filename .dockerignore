@@ -1,0 +1,31 @@
+# Secrets and local state
+.env*
+!.env.example
+token.json
+credentials.json
+secrets/
+data/
+telegram_offset.txt
+
+# Personal data
+resources/json/*.json
+resources/pdfs/
+evals/golden*.yaml
+!evals/golden.example.yaml
+evals/results/
+e2e_timing.py
+devtools/
+
+# Environments and VCS
+venv/
+.venv/
+.git/
+__pycache__/
+*.pyc
+
+# Not needed in the image
+.github/
+tests/
+.superpowers/
+.pytest_cache/
+.ruff_cache/

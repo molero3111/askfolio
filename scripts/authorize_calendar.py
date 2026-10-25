@@ -2,11 +2,11 @@
 Run this script once locally to authorize Google Calendar access and generate secrets/token.json.
 
 Usage:
-    python scripts/authorize_calendar.py
+    uv run python scripts/authorize_calendar.py
 
 A browser window will open asking you to sign in with your Google account and grant
 Calendar access. After you approve, the token is written to secrets/token.json.
-The app will use token.json automatically from that point on — no re-auth needed
+The app will use secrets/token.json automatically from that point on — no re-auth needed
 unless you revoke access in your Google account settings.
 """
 import sys

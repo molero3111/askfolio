@@ -71,7 +71,7 @@ Scheduling is **opt-in**: the bot works fine without it. To enable it, follow th
 4. **Configure OAuth consent screen** — "APIs & Services" → "OAuth consent screen" → choose **External** → fill in App name and your email → Save and Continue.
 5. **Add yourself as a test user** — on the OAuth consent screen page → "Test users" → add your Google account email → Save.
 6. **Create credentials** — "APIs & Services" → "Credentials" → "Create Credentials" → "OAuth client ID" → Application type: **Desktop app** → Create.
-7. **Download** — click the download icon next to the credential → save it as **`credentials.json`** in the project root.
+7. **Download** — click the download icon next to the credential → save it as **`secrets/credentials.json`** (create the `secrets/` directory in the project root; it is git-ignored).
 
 #### 4b. Create a dedicated test calendar (recommended)
 
@@ -87,24 +87,19 @@ Using a separate calendar keeps the bot away from your real schedule.
 Run this **once locally** (not in Docker — it opens a browser):
 
 ```bash
-# Using the project venv:
-venv/bin/pip install google-auth-oauthlib   # if not already installed
-venv/bin/python scripts/authorize_calendar.py
-
-# Or install it temporarily in any local env:
-pip install google-auth-oauthlib
-python scripts/authorize_calendar.py
+uv sync
+uv run python scripts/authorize_calendar.py
 ```
 
-A browser tab opens. Sign in, grant Calendar access, and `token.json` is written to the project root. The Docker container reads it automatically via the volume mount — **you never need to re-run this** unless you revoke access.
+A browser tab opens. Sign in, grant Calendar access, and `secrets/token.json` is written. The Docker container reads it automatically via the volume mount — **you never need to re-run this** unless you revoke access.
 
 #### 4d. Calendar environment variables
 
 In `.env`:
 
 ```env
-GOOGLE_CREDENTIALS_PATH=credentials.json
-GOOGLE_TOKEN_PATH=token.json
+GOOGLE_CREDENTIALS_PATH=secrets/credentials.json
+GOOGLE_TOKEN_PATH=secrets/token.json
 GOOGLE_CALENDAR_ID=primary            # or your dedicated calendar ID
 CALENDAR_TIMEZONE=America/Argentina/Buenos_Aires   # developer's local tz (for working hours)
 CALENDAR_DISPLAY_TIMEZONE=America/New_York         # tz shown to recruiters by default
@@ -134,7 +129,9 @@ docker compose run --rm app-askfolio python ingest/ingest_pgvector.py
 
 ---
 
-**Offset persistence:** The last Telegram `update_id` is saved to `telegram_offset.txt` so after a restart the bot only fetches new updates.
+**Offset persistence:** The last Telegram `update_id` is saved to `data/telegram_offset.txt` so after a restart the bot only fetches new updates.
+
+**Embedding model:** `EMBEDDING_MODEL` is a Docker build arg (the model is baked into the image and loaded offline). Changing it requires a rebuild (`docker compose build app-askfolio`) and a re-ingest; if `VECTOR_SIZE` changes too, re-ingest with `--reinstall`.
 
 **After changing code or dependencies:**
 ```bash
@@ -289,7 +286,7 @@ Full list: [Wikipedia — tz database time zones](https://en.wikipedia.org/wiki/
 ├── resources/
 │   └── json/                  # cv.json, github_projects.json
 ├── scripts/
-│   ├── authorize_calendar.py  # One-time Google OAuth — run locally to generate token.json
+│   ├── authorize_calendar.py  # One-time Google OAuth — run locally to generate secrets/token.json
 │   └── fetch_github_projects.py
 ├── main.py
 ├── docker-compose.yml
@@ -301,10 +298,10 @@ The database uses the **official [pgvector/pgvector](https://hub.docker.com/r/pg
 ## Running without Docker
 
 ```bash
-pip install -r requirements.txt
+uv sync
 docker compose up db-askfolio -d          # Postgres only
-python ingest/ingest_pgvector.py
-python main.py
+uv run python ingest/ingest_pgvector.py
+uv run python main.py
 ```
 
 Set `.env` `POSTGRES_HOST=localhost` and `POSTGRES_PORT=5432` if running Postgres via Docker but the app on the host. Point `LLM_API_URL` at `http://127.0.0.1:11434/v1/chat/completions` for local Ollama.
