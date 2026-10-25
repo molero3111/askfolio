@@ -67,6 +67,7 @@ def test_main_exits_2_on_bad_table_name(monkeypatch, capsys):
 def test_is_connect_error_classification():
     import asyncpg
     import sqlalchemy
+
     from ingest.migrate import _is_connect_error
 
     assert _is_connect_error(OSError("x"))
