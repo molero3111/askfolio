@@ -500,7 +500,7 @@ def _process_first(pending: list, conversations: dict) -> dict:
         ):
             try:
                 raw = _call_llm(messages)
-                reply = _strip_reasoning(raw)
+                reply = to_plain_text(_strip_reasoning(raw))
                 if not reply:
                     logger.warning("[process_message] LLM reply empty after stripping reasoning")
                     reply = ERROR_REPLY

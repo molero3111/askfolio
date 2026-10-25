@@ -7,7 +7,9 @@ asks the model for plain text; this keeps that promise when the model ignores it
 import re
 
 _LINK_RE = re.compile(r"\[([^\]\n]+)\]\((https?://[^)\s]+)\)")
-_BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
+_BOLD_RE = re.compile(r"\*\*([^\n]+?)\*\*")
+_CODE_RE = re.compile(r"`([^`\n]+)`")
+_STAR_BULLET_RE = re.compile(r"^(\s*)\* ", re.MULTILINE)
 _HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
 
 
@@ -19,4 +21,6 @@ def _link(match: re.Match) -> str:
 def to_plain_text(text: str) -> str:
     text = _LINK_RE.sub(_link, text)
     text = _BOLD_RE.sub(r"\1", text)
+    text = _CODE_RE.sub(r"\1", text)
+    text = _STAR_BULLET_RE.sub(r"\1• ", text)
     return _HEADING_RE.sub("", text)
