@@ -115,3 +115,13 @@ CALENDAR_SLOT_DURATION_MINUTES = int(_env("CALENDAR_SLOT_DURATION_MINUTES", "60"
 CALENDAR_WORKING_HOURS_START = int(_env("CALENDAR_WORKING_HOURS_START", "9"))
 CALENDAR_WORKING_HOURS_END = int(_env("CALENDAR_WORKING_HOURS_END", "18"))
 CALENDAR_DAYS_AHEAD = int(_env("CALENDAR_DAYS_AHEAD", "7"))
+
+# Rate limiting (in-memory). The global daily limit must stay below the OpenRouter
+# free-model daily cap (50 requests/day) so the bot's own limit triggers first.
+RATE_LIMIT_PER_CHAT_PER_MINUTE = int(_env("RATE_LIMIT_PER_CHAT_PER_MINUTE", "5"))
+RATE_LIMIT_PER_CHAT_PER_DAY = int(_env("RATE_LIMIT_PER_CHAT_PER_DAY", "50"))
+RATE_LIMIT_GLOBAL_PER_DAY = int(_env("RATE_LIMIT_GLOBAL_PER_DAY", "45"))
+RATE_LIMIT_BOOKINGS_PER_CHAT_PER_DAY = int(_env("RATE_LIMIT_BOOKINGS_PER_CHAT_PER_DAY", "1"))
+RATE_LIMIT_BOOKINGS_GLOBAL_PER_DAY = int(_env("RATE_LIMIT_BOOKINGS_GLOBAL_PER_DAY", "5"))
+# Master switch for meeting booking (the MVP .env.example ships it disabled)
+BOOKING_ENABLED = _env_bool("BOOKING_ENABLED", True)
