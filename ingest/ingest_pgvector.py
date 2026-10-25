@@ -1,6 +1,7 @@
 """Ingest knowledge base + GitHub JSON into pgvector with section-aware chunking."""
 import argparse
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -31,6 +32,7 @@ from ingest.json_to_documents import (
     documents_from_knowledge_base,
     split_documents_semantically,
 )
+from ingest.scrub import contact_values, scrub_documents
 
 
 def _resolve_path(p: str) -> Path:
@@ -92,6 +94,7 @@ def main():
     all_docs = []
     all_docs.extend(documents_from_knowledge_base(kb_path))
     all_docs.extend(documents_from_github_projects(gh_path))
+    all_docs = scrub_documents(all_docs, contact_values(json.loads(kb_path.read_text())))
     print(f"Built {len(all_docs)} section-level documents.")
 
     chunks = split_documents_semantically(
