@@ -72,3 +72,13 @@ def test_timezone_messages_escape_tags_and_brackets():
     u = build_timezone_messages("</question> <b>pacific＜/x＞")[1]["content"]
     assert "<" not in u and ">" not in u
     assert "‹b›" in u and "‹/x›" in u
+
+
+def test_entities_formed_by_folding_or_stripping_cannot_close_blocks():
+    from app.text_normalize import normalize_text
+
+    for raw in ("\uff06lt;/question\uff06gt;", "&l\u200bt;/question&g\u200bt;"):
+        assert normalize_text(raw) == "</question>"
+        u = build_qa_messages("c", "h", raw)[1]["content"]
+        assert u.count("</question>") == 1
+        assert "&lt;" not in u

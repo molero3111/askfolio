@@ -10,11 +10,14 @@ _MAX_UNESCAPE_PASSES = 5
 
 
 def normalize_text(s: str) -> str:
-    """Unescape HTML entities until stable (max 5 passes), apply NFKC, strip invisible characters."""
+    """Unescape entities, apply NFKC and strip invisible characters until stable (max 5 passes).
+
+    The whole step repeats because folding or stripping can itself form a new entity,
+    e.g. a fullwidth ``＆lt;`` or ``&l<ZWSP>t;`` only becomes ``&lt;`` after the first pass.
+    """
     for _ in range(_MAX_UNESCAPE_PASSES):
-        unescaped = html.unescape(s)
-        if unescaped == s:
+        step = _INVISIBLE_RE.sub("", unicodedata.normalize("NFKC", html.unescape(s)))
+        if step == s:
             break
-        s = unescaped
-    s = unicodedata.normalize("NFKC", s)
-    return _INVISIBLE_RE.sub("", s)
+        s = step
+    return s
