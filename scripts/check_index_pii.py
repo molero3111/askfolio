@@ -55,8 +55,12 @@ async def _count(dsn: str, table: str, emails: list[str], phones: list[str]) -> 
     email_sql, phone_sql = build_queries(table)
     conn = await asyncpg.connect(dsn)
     try:
-        email_rows = sum([await conn.fetchval(email_sql, e) for e in emails])
-        phone_rows = sum([await conn.fetchval(phone_sql, p) for p in phones])
+        email_rows = 0
+        for e in emails:
+            email_rows += await conn.fetchval(email_sql, e)
+        phone_rows = 0
+        for p in phones:
+            phone_rows += await conn.fetchval(phone_sql, p)
     finally:
         await conn.close()
     return email_rows, phone_rows
@@ -73,8 +77,15 @@ def main(argv: list[str] | None = None) -> int:
     kb_path = resolve_path(INGEST_KNOWLEDGE_JSON)
     cv = json.loads(kb_path.read_text(encoding="utf-8"))
     emails, phones = split_contacts(contact_values(cv))
+    if not emails and not phones:
+        print("no contact values in knowledge JSON; nothing to check")
+        return 2
     dsn = DB_CONNECTION_URL_ASYNC.replace("postgresql+asyncpg://", "postgresql://", 1)
-    email_rows, phone_rows = asyncio.run(_count(dsn, args.table, emails, phones))
+    try:
+        email_rows, phone_rows = asyncio.run(_count(dsn, args.table, emails, phones))
+    except Exception as exc:
+        print(f"check failed: {type(exc).__name__}")
+        return 2
     print(f"email: {email_rows} rows, phone: {phone_rows} rows")
     return 1 if email_rows or phone_rows else 0
 
