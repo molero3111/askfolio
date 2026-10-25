@@ -122,3 +122,10 @@ def test_language_is_decided_by_the_current_question_only():
     s = build_qa_messages("c", "h", "q")[0]["content"]
     assert "Decide the language from the <question> block **only**" in s
     assert "you don't share contact numbers or email addresses" in s
+
+
+def test_prompt_asks_for_plain_text_with_bare_urls():
+    s = build_qa_messages("c", "h", "q")[0]["content"]
+    assert "Never use Markdown" in s
+    assert "bare URL" in s
+    assert "markdown link is fine" not in s
