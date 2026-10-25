@@ -120,7 +120,7 @@ def test_scheduling_rule_is_a_standalone_rule(monkeypatch):
 
 def test_language_is_decided_by_the_current_question_only():
     s = build_qa_messages("c", "h", "q")[0]["content"]
-    assert "Decide the language from the <question> block **only**" in s
+    assert "Decide the language from the <question> block only" in s
     assert "you don't share contact numbers or email addresses" in s
 
 
