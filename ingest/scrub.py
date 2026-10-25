@@ -1,7 +1,10 @@
 """Remove email addresses and phone numbers from documents before embedding."""
 
+import html
 import re
+import unicodedata
 from collections.abc import Sequence
+from urllib.parse import unquote
 
 from langchain_core.documents import Document
 
@@ -15,6 +18,35 @@ _EMAIL_RE = re.compile(
 )
 _PHONE_RE = re.compile(r"(?<![\w/=.:-])\+?\(?\d[\d \t().-]{7,}\d(?![\w/-])")
 _YEAR_RE = re.compile(r"(?:19|20)\d\d")
+
+
+# Zero-width / format characters that split tokens without changing how they read.
+_INVISIBLE_RE = re.compile("[\u200b-\u200f\u2060\ufeff\u00ad]")
+_PCT_AT_TOKEN_RE = re.compile(r"\S*%40\S*", re.IGNORECASE)
+_AT_SEP = r"\s*(?:@|\[at\]|\(at\)|\bat\b)\s*"
+_DOT_SEP = r"(?:\s*(?:\.|\[dot\]|\(dot\)|\bdot\b)\s*)"
+
+
+def normalize(text: str) -> str:
+    """Fold look-alike, invisible and encoded forms so contacts match their plain spelling."""
+    text = unicodedata.normalize("NFKC", text)
+    text = _INVISIBLE_RE.sub("", text)
+    text = html.unescape(text)
+    if "%40" in text.lower():
+        text = _PCT_AT_TOKEN_RE.sub(lambda m: unquote(m.group(0)), text)
+    return unicodedata.normalize("NFKC", _INVISIBLE_RE.sub("", text))
+
+
+def owner_email_pattern(value: str) -> re.Pattern[str] | None:
+    """Match the owner's email incl. '[at]' / ' at ' / ' dot ' spellings, case-insensitive."""
+    local, sep, domain = normalize(value).strip().partition("@")
+    if not (sep and local and domain):
+        return None
+    domain_re = _DOT_SEP.join(re.escape(part) for part in domain.split("."))
+    return re.compile(
+        r"(?:mailto:)?(?<![A-Za-z0-9._%+-])" + re.escape(local) + _AT_SEP + domain_re,
+        re.IGNORECASE,
+    )
 
 
 def _looks_like_phone(candidate: str) -> bool:
@@ -37,7 +69,7 @@ def contact_values(cv: dict) -> list[str]:
 def _exact_pattern(value: str) -> re.Pattern[str] | None:
     value = value.strip()
     if "@" in value:
-        return re.compile(r"(?:mailto:)?" + re.escape(value), re.IGNORECASE)
+        return owner_email_pattern(value)
     digits = [c for c in value if c.isdigit()]
     if not digits:
         return None
@@ -48,6 +80,7 @@ def _exact_pattern(value: str) -> re.Pattern[str] | None:
 def _scrub(text: str, exact: Sequence[str]) -> tuple[str, list[tuple[str, int]]]:
     """Return scrubbed text and (kind, matched length) per removal."""
     found: list[tuple[str, int]] = []
+    text = normalize(text)
 
     for value in exact:
         pattern = _exact_pattern(value)

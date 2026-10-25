@@ -25,6 +25,38 @@ def test_removes_contacts(src):
 
 
 @pytest.mark.parametrize(
+    "src",
+    [
+        "jane.doe at example dot com",
+        "jane.doe [at] example.com",
+        "jane.doe (at) example [dot] com",
+        "jane.doe%40example.com",
+        "jane.doe&#64;example.com",
+        "jane.doe\uff20example.com",
+        "jane.d\u200boe@example.com",
+        "jane.doe@exam\u00adple.com",
+        "jane.doe @example.com",
+        "JANE.DOE AT EXAMPLE.COM",
+    ],
+)
+def test_removes_obfuscated_owner_email(src):
+    out, kinds = scrub_text(src, exact=[EMAIL, PHONE])
+    assert "jane" not in out.lower() and "example" not in out.lower()
+    assert kinds
+
+
+def test_removes_phone_with_zero_width_char():
+    out, kinds = scrub_text("call +99 12 34\u200b56 7890 now", exact=[EMAIL, PHONE])
+    assert "7890" not in out and kinds
+
+
+def test_normalisation_does_not_corrupt_plain_percent_text():
+    src = "100% done, 50%25 off"
+    out, _ = scrub_text(src, exact=[EMAIL, PHONE])
+    assert out == src
+
+
+@pytest.mark.parametrize(
     "keep",
     [
         "2015 - 2020",
