@@ -3,6 +3,15 @@ from pathlib import Path
 from urllib.parse import quote
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def resolve_path(p: str) -> Path:
+    """Resolve a configured path against the project root (absolute paths pass through)."""
+    path = Path(p)
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
 def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 

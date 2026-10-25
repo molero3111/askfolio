@@ -9,8 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def offset_path() -> Path:
-    p = Path(config.TELEGRAM_OFFSET_FILE)
-    return p if p.is_absolute() else Path.cwd() / p
+    return config.resolve_path(config.TELEGRAM_OFFSET_FILE)
 
 
 def load_offset() -> int | None:

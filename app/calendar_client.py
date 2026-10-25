@@ -1,6 +1,5 @@
 import logging
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from google.auth.transport.requests import Request
@@ -16,6 +15,7 @@ from app.config import (
     CALENDAR_WORKING_HOURS_START,
     GOOGLE_CALENDAR_ID,
     GOOGLE_TOKEN_PATH,
+    resolve_path,
 )
 from app.secure_io import atomic_write_secret
 
@@ -185,11 +185,11 @@ def format_slot_label(slot_start_iso: str, display_tz: ZoneInfo) -> str:
 
 
 def is_calendar_configured() -> bool:
-    return Path(GOOGLE_TOKEN_PATH).exists()
+    return resolve_path(GOOGLE_TOKEN_PATH).exists()
 
 
 def _get_credentials() -> Credentials:
-    token_path = Path(GOOGLE_TOKEN_PATH)
+    token_path = resolve_path(GOOGLE_TOKEN_PATH)
     creds = None
 
     if token_path.exists():

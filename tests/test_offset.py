@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 
 import pytest
 
@@ -36,10 +35,10 @@ def test_creates_parent_dir_and_leaves_no_temp(offset_file):
     assert list(offset_file.parent.iterdir()) == [offset_file]
 
 
-def test_relative_path_resolves_against_cwd(tmp_path, monkeypatch):
+def test_relative_path_resolves_against_project_root(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "TELEGRAM_OFFSET_FILE", "data/o.txt")
     monkeypatch.chdir(tmp_path)
-    assert offset.offset_path() == Path(tmp_path) / "data" / "o.txt"
+    assert offset.offset_path() == config.PROJECT_ROOT / "data" / "o.txt"
 
 
 def test_overwrites_existing_value(offset_file):

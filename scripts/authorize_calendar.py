@@ -22,12 +22,12 @@ load_dotenv(ROOT / ".env")
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-from app.config import GOOGLE_CREDENTIALS_PATH, GOOGLE_TOKEN_PATH
+from app.config import GOOGLE_CREDENTIALS_PATH, GOOGLE_TOKEN_PATH, resolve_path
 from app.secure_io import atomic_write_secret
 
 _SCOPES = ["https://www.googleapis.com/auth/calendar"]
-_CREDS_PATH = Path(GOOGLE_CREDENTIALS_PATH)
-_TOKEN_PATH = Path(GOOGLE_TOKEN_PATH)
+_CREDS_PATH = resolve_path(GOOGLE_CREDENTIALS_PATH)
+_TOKEN_PATH = resolve_path(GOOGLE_TOKEN_PATH)
 
 if not _CREDS_PATH.exists():
     raise SystemExit(
