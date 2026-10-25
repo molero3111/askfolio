@@ -180,7 +180,19 @@ def test_send_message_error_without_token(monkeypatch):
     assert TOKEN not in str(ei.value)
 
 
-def test_run_once_log_never_contains_token(monkeypatch, caplog, tmp_path):
+@pytest.fixture
+def restore_root_logging():
+    root = logging.getLogger()
+    handlers, filters = list(root.handlers), list(root.filters)
+    handler_filters = {h: list(h.filters) for h in handlers}
+    yield
+    root.handlers[:] = handlers
+    root.filters[:] = filters
+    for h, fl in handler_filters.items():
+        h.filters[:] = fl
+
+
+def test_run_once_log_never_contains_token(monkeypatch, caplog, tmp_path, restore_root_logging):
     monkeypatch.setenv("HEARTBEAT_FILE", str(tmp_path / "hb"))
 
     def boom(*a, **k):
@@ -224,3 +236,12 @@ def test_get_updates_read_timeout_returns_empty(monkeypatch):
 
     monkeypatch.setattr(telegram_client.requests, "get", slow)
     assert telegram_client.get_updates() == []
+
+
+def test_filter_survives_malformed_log_call():
+    flt = log_redact.RedactionFilter([])
+    rec = logging.LogRecord("t", logging.INFO, __file__, 1, f"two %s %s /bot{TOKEN}", ("one",), None)
+    assert flt.filter(rec) is True
+    out = logging.Formatter("%(message)s").format(rec)
+    assert TOKEN not in out
+    assert "bot***" in out
