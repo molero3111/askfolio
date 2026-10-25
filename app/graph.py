@@ -28,6 +28,7 @@ from app.config import (
 )
 from app.conversation import ConversationState, SchedulingMode
 from app.observability import traceable, tracing_context
+from app.offset import save_offset
 from app.rag import get_relevant_context
 from app.telegram_client import get_updates, send_message
 
@@ -324,19 +325,6 @@ def _handle_scheduling(
         conv.reset_scheduling()
 
 
-def _persist_offset(offset: int) -> None:
-    """Write the Telegram offset to disk right after fetching updates."""
-    from pathlib import Path
-
-    from app.config import TELEGRAM_OFFSET_FILE
-    p = Path(TELEGRAM_OFFSET_FILE)
-    p = p if p.is_absolute() else Path.cwd() / p
-    try:
-        p.write_text(str(offset))
-    except OSError:
-        logger.warning("[get_telegram_updates] could not persist offset to %s", p)
-
-
 def get_telegram_updates_node(state: AgentState) -> dict:
     """Node: fetch new Telegram messages and return (chat_id, message_id, text) list."""
     offset = state.get("offset")
@@ -369,7 +357,7 @@ def get_telegram_updates_node(state: AgentState) -> dict:
     next_offset = max_update_id + 1 if num_updates > 0 else offset
     if num_updates > 0 and next_offset is not None:
         # Persist immediately so a restart mid-processing never replays these updates.
-        _persist_offset(next_offset)
+        save_offset(next_offset)
     return {
         "pending_messages": pending,
         "offset": next_offset,
