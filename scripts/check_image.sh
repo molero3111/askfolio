@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 # Assert the built image contains no secrets/private data and runs as non-root.
 # Usage: scripts/check_image.sh IMAGE
-set -u
+set -uo pipefail
 
 IMAGE="${1:?usage: check_image.sh IMAGE}"
 fail=0
 err() { echo "FAIL: $*" >&2; fail=1; }
 run() { docker run --rm --entrypoint "" "$IMAGE" "$@"; }
 
+docker image inspect "$IMAGE" >/dev/null 2>&1 || { echo "FAIL: image not found: $IMAGE" >&2; exit 1; }
+
 for name in .env token.json credentials.json venv secrets data; do
-    if run test -e "/app/$name"; then
+    run test -e "/app/$name"
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
         err "/app/$name exists in image"
+    elif [ "$rc" -ne 1 ]; then
+        err "could not check /app/$name (docker/exec exit $rc)"
     fi
 done
 
@@ -24,9 +30,17 @@ if [ "$uid" != "10001" ]; then
     err "image runs as uid '$uid', expected 10001"
 fi
 
-found=$(run sh -c "find / \( -name token.json -o -name credentials.json -o -name '.env' \) 2>/dev/null")
-if [ -n "$found" ]; then
-    err "secret files found in image: $(echo "$found" | tr '\n' ' ')"
+# find exits non-zero on unreadable /proc entries, so guard against docker
+# failures via a sentinel line instead of find's own status.
+found=$(run sh -c "find / \( -name token.json -o -name credentials.json -o -name '.env' \) 2>/dev/null; echo __done__")
+rc=$?
+if [ "$rc" -ne 0 ] || ! printf '%s\n' "$found" | grep -qx '__done__'; then
+    err "could not run find in image (exit $rc)"
+else
+    found=$(printf '%s\n' "$found" | grep -vx '__done__')
+    if [ -n "$found" ]; then
+        err "secret files found in image: $(echo "$found" | tr '\n' ' ')"
+    fi
 fi
 
 if [ "$fail" -ne 0 ]; then
