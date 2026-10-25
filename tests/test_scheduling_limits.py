@@ -114,3 +114,41 @@ def test_slot_reply_inside_flow_is_not_limited(monkeypatch):
     out = graph.process_message_node(state)
     assert out["conversations"]["1"]["mode"] != SchedulingMode.AWAITING_SLOT_SELECTION.value
     assert graph.RATE_LIMIT_REPLY not in sent
+
+
+def _qa_setup(monkeypatch, booking):
+    sent, calls = _setup(monkeypatch)
+    monkeypatch.setattr(graph, "BOOKING_ENABLED", booking)
+    monkeypatch.setattr(graph, "_retrieve_context", lambda _q: "ctx")
+
+    def fake_llm(_messages):
+        calls["qa_llm"] += 1
+        return "A Q&A answer"
+
+    monkeypatch.setattr(graph, "_call_llm", fake_llm)
+    return sent, calls
+
+
+def test_booking_off_scheduling_keywords_go_to_qa(monkeypatch):
+    sent, calls = _qa_setup(monkeypatch, booking=False)
+    state = {
+        "offset": None,
+        "pending_messages": [(1, 10, "Can we talk about his Python experience?")],
+        "conversations": {},
+    }
+    graph.process_message_node(state)
+    assert calls["qa_llm"] == 1
+    assert sent == ["A Q&A answer"]
+    assert graph.BOOKING_DISABLED_REPLY not in sent
+
+
+def test_booking_on_scheduling_intent_still_routes_to_scheduling(monkeypatch):
+    _sent, calls = _qa_setup(monkeypatch, booking=True)
+    state = {
+        "offset": None,
+        "pending_messages": [(1, 10, "can we schedule a meeting?")],
+        "conversations": {},
+    }
+    graph.process_message_node(state)
+    assert calls["slots"] == 1
+    assert calls["qa_llm"] == 0

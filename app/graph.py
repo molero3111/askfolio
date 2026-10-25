@@ -456,7 +456,8 @@ def _process_first(pending: list, conversations: dict) -> dict:
 
     # Route to scheduling if already in a scheduling flow or intent detected
     in_scheduling_flow = conv.mode not in (SchedulingMode.IDLE, SchedulingMode.CANCELLED)
-    if in_scheduling_flow or _is_scheduling_intent(user_input):
+    # With booking off, keyword intent must not hijack Q&A ("can we talk about Python?").
+    if in_scheduling_flow or (BOOKING_ENABLED and _is_scheduling_intent(user_input)):
         if not in_scheduling_flow and not _message_allowed(chat_id, reply_to_message_id):
             # Cheap non-LLM path, but still capped so it can't hammer the calendar API.
             conversations[key] = conv.to_dict()
