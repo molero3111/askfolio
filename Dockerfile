@@ -20,12 +20,12 @@ COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 
 # Bake the embedding model into the image, then run offline
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('$EMBEDDING_MODEL')"
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('$EMBEDDING_MODEL')" \
+    && chmod -R a+rX /opt/models
 ENV HF_HUB_OFFLINE=1
 
 # Non-root runtime user
-RUN groupadd -g 10001 app && useradd -u 10001 -g 10001 -M -s /usr/sbin/nologin app \
-    && chmod -R a+rX /opt/venv /opt/models
+RUN groupadd -g 10001 app && useradd -u 10001 -g 10001 -M -s /usr/sbin/nologin app
 
 COPY . .
 
