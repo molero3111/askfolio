@@ -1,14 +1,11 @@
 # CI for askfolio: lint, tests and the privacy scan (test), plus a Docker image build and
-# check (image). Runs on PRs to development/main and is reused by the deploy workflow through
+# check (image). Runs on every PR and is reused by the deploy workflow through
 # workflow_call, which checks for the job named `test`.
 
 name: CI
 
 on:
   pull_request:
-    branches:
-      - development
-      - main
   workflow_call:
     secrets:
       PRIVACY_DENYLIST:
