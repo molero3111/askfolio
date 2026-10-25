@@ -279,7 +279,7 @@ def test_captured_warning_is_redacted(caplog, restore_root_logging):
     import warnings
 
     log_redact.install_redaction([LS_KEY])
-    # importing main already enabled capture at collection time; reinstall it fresh
+    # start from a clean capture state
     logging.captureWarnings(False)
     logging.captureWarnings(True)
     try:
@@ -309,3 +309,17 @@ def test_uncaught_exception_is_logged_redacted(caplog, restore_root_logging, mon
             sys.excepthook(*sys.exc_info())
     assert "Uncaught exception" in caplog.text
     assert LS_KEY not in caplog.text
+
+
+def test_importing_main_installs_no_global_hooks():
+    code = (
+        "import logging, sys\n"
+        "hook = sys.excepthook\n"
+        "import main\n"
+        "assert sys.excepthook is hook, 'excepthook replaced at import'\n"
+        "assert not logging.getLogger().filters, 'root filter installed at import'\n"
+        "assert not logging.getLogger().handlers, 'logging configured at import'\n"
+    )
+    env = {**os.environ, "ASKFOLIO_SKIP_DOTENV": "1"}
+    r = subprocess.run([sys.executable, "-c", code], check=False, capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr

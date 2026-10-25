@@ -37,3 +37,10 @@ def test_absolute_path_is_unchanged(tmp_path):
 def test_booking_disabled_when_env_missing(monkeypatch, reload_config):
     monkeypatch.delenv("BOOKING_ENABLED", raising=False)
     assert reload_config().BOOKING_ENABLED is False
+
+
+def test_skip_dotenv_flag_is_exposed(monkeypatch, reload_config):
+    monkeypatch.setenv("ASKFOLIO_SKIP_DOTENV", "1")
+    assert reload_config().SKIP_DOTENV is True
+    monkeypatch.delenv("ASKFOLIO_SKIP_DOTENV")
+    assert reload_config().SKIP_DOTENV is False
