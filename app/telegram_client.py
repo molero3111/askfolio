@@ -9,6 +9,10 @@ BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 logger = logging.getLogger(__name__)
 
 
+class TelegramError(RuntimeError):
+    """Telegram API failure. The message never contains the request URL."""
+
+
 def get_updates(offset: int | None = None) -> list[dict[str, Any]]:
     """Fetch new updates (messages). Long-poll: request blocks up to GET_UPDATES_TIMEOUT seconds for new updates."""
     url = f"{BASE}/getUpdates"
@@ -20,14 +24,23 @@ def get_updates(offset: int | None = None) -> list[dict[str, Any]]:
         r = requests.get(url, params=params, timeout=(10, GET_UPDATES_TIMEOUT + 30))
     except requests.exceptions.ReadTimeout as exc:
         # Normal for a long poll with no new updates.
-        logger.warning("[telegram_client] getUpdates read timeout: %s", exc)
+        logger.warning("[telegram_client] getUpdates read timeout (%s)", type(exc).__name__)
         return []
-    # Any other failure (connect error, DNS, 4xx/5xx, ok:false) raises so the
-    # caller backs off and the heartbeat goes stale during a sustained outage.
-    r.raise_for_status()
-    data = r.json()
+    except requests.RequestException as exc:
+        # Never re-raise the original: its text carries the URL, which holds the bot token.
+        raise TelegramError(f"getUpdates failed: {type(exc).__name__}") from None
+    if r.status_code == 409:
+        raise TelegramError(
+            "getUpdates conflict (HTTP 409): another poller or a webhook is using this bot token"
+        )
+    if r.status_code >= 400:
+        raise TelegramError(f"getUpdates failed: HTTP {r.status_code}")
+    try:
+        data = r.json()
+    except ValueError:
+        raise TelegramError("getUpdates failed: invalid JSON") from None
     if not data.get("ok"):
-        raise RuntimeError(f"getUpdates returned ok=false: {str(data)[:200]}")
+        raise TelegramError("getUpdates failed: ok=false")
     return data.get("result", [])
 
 
@@ -38,5 +51,9 @@ def send_message(
     payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
     if reply_to_message_id is not None:
         payload["reply_parameters"] = {"message_id": reply_to_message_id}
-    r = requests.post(url, json=payload, timeout=10)
-    r.raise_for_status()
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+    except requests.RequestException as exc:
+        raise TelegramError(f"sendMessage failed: {type(exc).__name__}") from None
+    if r.status_code >= 400:
+        raise TelegramError(f"sendMessage failed: HTTP {r.status_code}")

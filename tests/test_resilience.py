@@ -7,7 +7,7 @@ import pytest
 import requests
 
 import main
-from app import graph, telegram_client
+from app import graph, log_redact, telegram_client
 
 
 def test_send_telegram_swallows_errors(monkeypatch, caplog):
@@ -120,39 +120,102 @@ def test_startup_propagates_vectorstore_failure(monkeypatch, tmp_path):
     assert not (tmp_path / "hb").exists()
 
 
+TOKEN = "123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+
 class _Resp:
     def __init__(self, data, status=200):
-        self._data, self.status = data, status
-
-    def raise_for_status(self):
-        if self.status >= 400:
-            raise requests.HTTPError(str(self.status))
+        self._data, self.status_code = data, status
 
     def json(self):
         return self._data
 
 
-def test_get_updates_raises_on_connection_error(monkeypatch):
+def _get_returning(resp):
+    return lambda *a, **k: resp
+
+
+def test_get_updates_connection_error_wrapped_without_token(monkeypatch):
     def boom(*a, **k):
-        raise requests.ConnectionError("refused")
+        raise requests.ConnectionError(f"Max retries exceeded with url: /bot{TOKEN}/getUpdates")
 
     monkeypatch.setattr(telegram_client.requests, "get", boom)
-    with pytest.raises(requests.ConnectionError):
+    with pytest.raises(telegram_client.TelegramError) as ei:
         telegram_client.get_updates()
+    assert TOKEN not in str(ei.value)
+    assert ei.value.__cause__ is None and ei.value.__suppress_context__
 
 
-def test_get_updates_raises_on_http_error(monkeypatch):
-    monkeypatch.setattr(telegram_client.requests, "get", lambda *a, **k: _Resp({}, 409))
-    with pytest.raises(requests.HTTPError):
+def test_get_updates_http_error_without_token(monkeypatch):
+    monkeypatch.setattr(telegram_client.requests, "get", _get_returning(_Resp({}, 401)))
+    with pytest.raises(telegram_client.TelegramError, match="HTTP 401") as ei:
         telegram_client.get_updates()
+    assert TOKEN not in str(ei.value)
+
+
+def test_get_updates_409_conflict_message(monkeypatch):
+    monkeypatch.setattr(telegram_client.requests, "get", _get_returning(_Resp({}, 409)))
+    with pytest.raises(telegram_client.TelegramError) as ei:
+        telegram_client.get_updates()
+    assert str(ei.value) == (
+        "getUpdates conflict (HTTP 409): another poller or a webhook is using this bot token"
+    )
 
 
 def test_get_updates_raises_on_not_ok(monkeypatch):
     monkeypatch.setattr(
-        telegram_client.requests, "get", lambda *a, **k: _Resp({"ok": False})
+        telegram_client.requests, "get", _get_returning(_Resp({"ok": False}))
     )
-    with pytest.raises(RuntimeError):
+    with pytest.raises(telegram_client.TelegramError):
         telegram_client.get_updates()
+
+
+def test_send_message_error_without_token(monkeypatch):
+    def boom(*a, **k):
+        raise requests.ConnectionError(f"url /bot{TOKEN}/sendMessage")
+
+    monkeypatch.setattr(telegram_client.requests, "post", boom)
+    with pytest.raises(telegram_client.TelegramError) as ei:
+        telegram_client.send_message(1, "x")
+    assert TOKEN not in str(ei.value)
+
+
+def test_run_once_log_never_contains_token(monkeypatch, caplog, tmp_path):
+    monkeypatch.setenv("HEARTBEAT_FILE", str(tmp_path / "hb"))
+
+    def boom(*a, **k):
+        raise requests.ConnectionError(f"Max retries exceeded with url: /bot{TOKEN}/getUpdates")
+
+    monkeypatch.setattr(telegram_client.requests, "get", boom)
+
+    class G:
+        def invoke(self, state):
+            telegram_client.get_updates()
+
+    log_redact.install_redaction([TOKEN])
+    with caplog.at_level(logging.INFO):
+        main.run_once(G(), {"offset": None}, sleep=lambda s: None)
+    assert "Poll cycle failed" in caplog.text
+    assert TOKEN not in caplog.text
+    assert TOKEN not in "".join(r.getMessage() + (r.exc_text or "") for r in caplog.records)
+
+
+def test_filter_redacts_args_and_exc_info():
+    flt = log_redact.RedactionFilter(["sekret-key", "  ", ""])
+    try:
+        raise ValueError(f"bad url /bot{TOKEN}/x and sekret-key")
+    except ValueError:
+        import sys
+
+        rec = logging.LogRecord(
+            "t", logging.ERROR, __file__, 1, "got %s", ("sekret-key",), sys.exc_info()
+        )
+    flt.filter(rec)
+    out = logging.Formatter("%(message)s").format(rec)
+    assert "sekret-key" not in out
+    assert TOKEN not in out
+    assert "got ***" in out
+    assert "bot***" in out
 
 
 def test_get_updates_read_timeout_returns_empty(monkeypatch):

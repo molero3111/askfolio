@@ -15,11 +15,13 @@ from app.config import (
     LANGSMITH_ENDPOINT,
     LANGSMITH_PROJECT,
     LANGSMITH_RUNTIME_FLAG,
+    LLM_API_KEY,
     LLM_MODEL,
     POLL_INTERVAL_SECONDS,
     TELEGRAM_BOT_TOKEN,
 )
 from app.graph import build_graph
+from app.log_redact import install_redaction
 from app.offset import load_offset, save_offset
 from app.rag import get_vectorstore
 
@@ -40,6 +42,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+install_redaction([TELEGRAM_BOT_TOKEN, LLM_API_KEY])
 
 
 def _is_langsmith_exception(exc: BaseException) -> bool:
@@ -77,7 +80,7 @@ def run_once(graph, state: dict, sleep=time.sleep) -> dict:
             )
             os.environ[LANGSMITH_RUNTIME_FLAG] = "false"
             return state
-        logger.error("Poll cycle failed (%s: %s); retrying in 5s", type(exc).__name__, exc)
+        logger.exception("Poll cycle failed (%s); retrying in 5s", type(exc).__name__)
         sleep(5)
         # Resume from the on-disk offset (already advanced past the fetched batch) so a
         # message that crashes processing is skipped, not replayed forever.

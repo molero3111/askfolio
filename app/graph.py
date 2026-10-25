@@ -33,7 +33,7 @@ from app.observability import traceable, tracing_context
 from app.offset import save_offset
 from app.rag import get_relevant_context
 from app.rate_limit import Decision, MessageLimiter
-from app.telegram_client import get_updates, send_message
+from app.telegram_client import TelegramError, get_updates, send_message
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ def _call_llm(messages: list[dict]) -> str:
 def _send_telegram(chat_id: int, reply: str, reply_to_message_id: int) -> None:
     try:
         send_message(chat_id, reply, reply_to_message_id=reply_to_message_id)
-    except requests.RequestException as exc:
+    except (requests.RequestException, TelegramError) as exc:
         logger.warning("[telegram] sendMessage failed (chat_id=%s): %s", chat_id, exc)
 
 
