@@ -34,18 +34,26 @@ def split_contacts(values: list[str]) -> tuple[list[str], list[str]]:
     return emails, [p for p in phones if p]
 
 
-def build_queries(table: str) -> tuple[str, str]:
+def phone_variants(digits: str) -> list[str]:
+    """Digit strings to look for: the full number, plus its national form (last 10) when longer."""
+    variants = [digits]
+    if len(digits) > 10:
+        variants.append(digits[-10:])
+    return variants
+
+
+def build_queries(table: str, phone_params: int = 1) -> tuple[str, str]:
     t = table.replace('"', '""')
     meta = f"{METADATA_COL}::text"
     email_sql = (
         f'SELECT count(*) FROM "{t}" WHERE {CONTENT_COL} ILIKE \'%\' || $1 || \'%\' '
         f"OR {meta} ILIKE '%' || $1 || '%'"
     )
-    phone_sql = (
-        f'SELECT count(*) FROM "{t}" WHERE '
-        f"regexp_replace({CONTENT_COL}, '\\D', '', 'g') LIKE '%' || $1 || '%' "
-        f"OR regexp_replace({meta}, '\\D', '', 'g') LIKE '%' || $1 || '%'"
-    )
+    conds = []
+    for i in range(1, phone_params + 1):
+        conds.append(f"regexp_replace({CONTENT_COL}, '\\D', '', 'g') LIKE '%' || ${i} || '%'")
+        conds.append(f"regexp_replace({meta}, '\\D', '', 'g') LIKE '%' || ${i} || '%'")
+    phone_sql = f'SELECT count(*) FROM "{t}" WHERE ' + " OR ".join(conds)
     return email_sql, phone_sql
 
 
@@ -75,7 +83,7 @@ def count_obfuscated_email_rows(rows: list[str], emails: list[str]) -> int:
 async def _count(dsn: str, table: str, emails: list[str], phones: list[str]) -> tuple[int, int]:
     import asyncpg
 
-    email_sql, phone_sql = build_queries(table)
+    email_sql, _ = build_queries(table)
     candidate_sql = build_candidate_query(table)
     conn = await asyncpg.connect(dsn)
     try:
@@ -92,7 +100,9 @@ async def _count(dsn: str, table: str, emails: list[str], phones: list[str]) -> 
         email_rows = max(email_rows, obfuscated)
         phone_rows = 0
         for p in phones:
-            phone_rows += await conn.fetchval(phone_sql, p)
+            variants = phone_variants(p)
+            phone_sql = build_queries(table, len(variants))[1]
+            phone_rows += await conn.fetchval(phone_sql, *variants)
     finally:
         await conn.close()
     return email_rows, phone_rows

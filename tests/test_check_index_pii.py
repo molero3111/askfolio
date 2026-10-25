@@ -75,3 +75,16 @@ def test_email_candidate_key_uses_first_dot_segment():
     from scripts.check_index_pii import email_candidate_key
 
     assert email_candidate_key(" jane.doe@example.com") == "jane"
+
+
+def test_phone_variants_adds_national_form_for_long_numbers():
+    from scripts.check_index_pii import phone_variants
+
+    assert phone_variants("991234567890") == ["991234567890", "1234567890"]
+    assert phone_variants("1234567890") == ["1234567890"]
+
+
+def test_build_queries_one_bind_param_per_phone_variant():
+    _, sql = build_queries("t", 2)
+    assert "$1" in sql and "$2" in sql and "$3" not in sql
+    assert sql.count("LIKE") == 4
