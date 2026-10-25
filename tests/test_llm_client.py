@@ -233,3 +233,42 @@ def test_api_key_never_logged(caplog):
         with pytest.raises(LLMCreditExhausted):
             chat(MSGS, session=FakeSession([FakeResponse(402)]), sleep=no_sleep)
     assert "sk-test" not in caplog.text
+
+
+def _with_choice(**choice_extra):
+    body = {
+        "choices": [{"message": {"content": "partial text"}, **choice_extra}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    }
+    return FakeResponse(200, body)
+
+
+def test_finish_reason_error_is_unavailable_even_with_content():
+    with pytest.raises(LLMUnavailable):
+        chat(MSGS, session=FakeSession([_with_choice(finish_reason="error")]), sleep=no_sleep)
+
+
+def test_choice_error_is_unavailable_even_with_content():
+    resp = _with_choice(error={"code": 502, "message": "upstream"})
+    with pytest.raises(LLMUnavailable):
+        chat(MSGS, session=FakeSession([resp]), sleep=no_sleep)
+
+
+def test_finish_reason_length_warns_but_returns_content(caplog):
+    with caplog.at_level(logging.WARNING):
+        r = chat(MSGS, session=FakeSession([_with_choice(finish_reason="length")]), sleep=no_sleep)
+    assert r.content == "partial text"
+    assert "truncated" in caplog.text
+
+
+def test_empty_reply_after_reasoning_tokens_warns(caplog):
+    body = {
+        "choices": [{"message": {"content": ""}}],
+        "usage": {"completion_tokens": 800, "completion_tokens_details": {"reasoning_tokens": 800}},
+    }
+    with caplog.at_level(logging.WARNING), pytest.raises(LLMUnavailable):
+        chat(MSGS, session=FakeSession([FakeResponse(200, body)]), sleep=no_sleep)
+    assert (
+        "[llm] reply empty after 800 reasoning tokens; "
+        "raise LLM_MAX_TOKENS or pick a non-reasoning model"
+    ) in caplog.text

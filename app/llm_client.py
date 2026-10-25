@@ -135,14 +135,28 @@ def chat(
     if not isinstance(body, dict) or body.get("error") or not body.get("choices"):
         raise LLMUnavailable("LLM response had no choices")
     try:
-        content = body["choices"][0]["message"]["content"]
+        choice = body["choices"][0]
+        content = choice["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMUnavailable("LLM response malformed") from exc
+    finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+    if finish_reason == "error" or (isinstance(choice, dict) and choice.get("error")):
+        raise LLMUnavailable("LLM reported an error in the completion")
+    usage = body.get("usage") or {}
     if not isinstance(content, str) or not content.strip():
+        details = usage.get("completion_tokens_details") or {}
+        reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else None
+        if isinstance(reasoning, int) and reasoning > 0:
+            logger.warning(
+                "[llm] reply empty after %s reasoning tokens; "
+                "raise LLM_MAX_TOKENS or pick a non-reasoning model",
+                reasoning,
+            )
         raise LLMUnavailable("LLM returned empty content")
+    if finish_reason == "length":
+        logger.warning("[llm] reply truncated (finish_reason=length); consider raising LLM_MAX_TOKENS")
 
     latency = time.monotonic() - start
-    usage = body.get("usage") or {}
     result = LLMResult(
         content=content.strip(),
         model=body.get("model") or primary,
