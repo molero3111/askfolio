@@ -6,10 +6,13 @@
 #   .github/scripts/resolve-deploy-sha.sh.
 # - ci: runs ci.yml on the same commit; nothing builds or deploys unless it passes.
 #   (workflow_call, not workflow_run: workflow_run runs the default branch's copy of this file.)
-# - build: pushes ghcr.io/molero3111/askfolio:<sha> (amd64, private).
+# - build: pushes ghcr.io/molero3111/askfolio:<sha> (amd64). The GHCR package becomes
+#   public after the first verified build.
 # - deploy: joins the tailnet and SSHes to the deploy user, whose forced command takes
-#   "<app> <sha>" with the job token on stdin (the image is private) and reports by exit code.
-#   The server migrates with the new image, swaps, health-gates /healthz and reverts on failure.
+#   "<app> <sha>" with the job token on stdin (so the first pull works while the package is private) and
+#   reports by exit code. The server migrates with the new image, swaps, health-gates with the
+#   compose healthchecks (the app heartbeat and pg_isready) via `up --wait`, and reverts on
+#   failure. There is no HTTP healthcheck yet.
 # Secrets live in the "production" environment:
 #   TS_OAUTH_CLIENT_ID, TS_OAUTH_SECRET, DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS,
 #   DEPLOY_HOST (the host stays out of this public repo)
@@ -143,7 +146,6 @@ jobs:
       (needs.resolve.outputs.mode == 'redeploy' && needs.build.result == 'skipped'))
     environment: production
     permissions:
-      contents: read
       packages: read
     steps:
       - name: Connect to Tailscale
