@@ -166,6 +166,29 @@ def _work_experience_docs(items: list) -> list[Document]:
     return docs
 
 
+def _project_docs(items: list) -> list[Document]:
+    docs = []
+    for i, row in enumerate(items):
+        if not isinstance(row, dict):
+            continue
+        content = "\n".join(
+            [
+                "## Project",
+                f"Name: {row.get('name', '')}",
+                f"Year: {row.get('year', '')}",
+                f"URL: {row.get('url', '')}",
+                f"Description: {row.get('description', '')}",
+            ]
+        )
+        docs.append(
+            Document(
+                page_content=content,
+                metadata={"source": "knowledge_base", "section": f"projects.{i}"},
+            )
+        )
+    return docs
+
+
 def documents_from_knowledge_base(path: Path) -> list[Document]:
     data = _load_json(path)
     docs: list[Document] = []
@@ -187,6 +210,9 @@ def documents_from_knowledge_base(path: Path) -> list[Document]:
 
     if "work_experience" in data and isinstance(data["work_experience"], list):
         docs.extend(_work_experience_docs(data["work_experience"]))
+
+    if "projects" in data and isinstance(data["projects"], list):
+        docs.extend(_project_docs(data["projects"]))
 
     return docs
 
