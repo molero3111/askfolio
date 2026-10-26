@@ -56,3 +56,13 @@ def test_parse_name_list():
 
     assert _name_list("") == []
     assert _name_list(" alpha, Beta ,,gamma ") == ["alpha", "Beta", "gamma"]
+
+
+def test_missing_repos_reports_names_absent_from_the_file(tmp_path):
+    from ingest.json_to_documents import documents_from_github_projects, missing_repos
+
+    path = _write_projects(tmp_path, ["Alpha", "beta"])
+    allowlist = ["alpha", "typo-repo"]
+    docs = documents_from_github_projects(path, allowlist=allowlist)
+    assert missing_repos(docs, allowlist) == ["typo-repo"]
+    assert missing_repos(docs, ["ALPHA"]) == []

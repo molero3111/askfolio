@@ -28,6 +28,7 @@ from app.config import (
 from ingest.json_to_documents import (
     documents_from_github_projects,
     documents_from_knowledge_base,
+    missing_repos,
     split_documents_semantically,
 )
 from ingest.scrub import contact_values, scrub_documents
@@ -93,11 +94,12 @@ def main():
     all_docs.extend(documents_from_knowledge_base(kb_path))
     gh_docs = documents_from_github_projects(gh_path, allowlist=INGEST_GITHUB_REPOS)
     if INGEST_GITHUB_REPOS:
-        kept = {d.metadata["repo"].lower() for d in gh_docs if d.metadata.get("section") == "github_project"}
-        missing = [name for name in INGEST_GITHUB_REPOS if name.lower() not in kept]
-        print(f"INGEST_GITHUB_REPOS: kept {len(kept)} repos.")
+        missing = missing_repos(gh_docs, INGEST_GITHUB_REPOS)
         if missing:
-            print(f"Warning: not in {gh_path.name}: {', '.join(missing)}")
+            # Stop before touching the table: a typo would silently drop a repo the owner wants shown
+            print(f"INGEST_GITHUB_REPOS names not in {gh_path.name}: {', '.join(missing)}. Nothing changed.")
+            sys.exit(1)
+        print(f"INGEST_GITHUB_REPOS: kept {len(INGEST_GITHUB_REPOS)} repos.")
     all_docs.extend(gh_docs)
     all_docs = scrub_documents(all_docs, contact_values(json.loads(kb_path.read_text(encoding="utf-8"))))
     print(f"Built {len(all_docs)} section-level documents.")

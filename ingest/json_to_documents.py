@@ -299,6 +299,12 @@ def documents_from_github_projects(path: Path, allowlist: list[str] | None = Non
     return docs
 
 
+def missing_repos(docs: list[Document], allowlist: list[str]) -> list[str]:
+    """Allowlisted names with no matching per-repo document (case-insensitive)."""
+    kept = {d.metadata["repo"].lower() for d in docs if d.metadata.get("section") == "github_project"}
+    return [name for name in allowlist if name.lower() not in kept]
+
+
 def split_documents_semantically(
     documents: list[Document],
     chunk_size: int,
