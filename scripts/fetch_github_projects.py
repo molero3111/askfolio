@@ -61,8 +61,9 @@ def fetch_repos() -> list[dict]:
         )
 
         if response.status_code != 200:
-            print(f"Error fetching repos: {response.status_code}")
-            break
+            # A partial list would overwrite a good file with fewer repos, so stop without writing
+            print(f"Error fetching repos: {response.status_code}; nothing written.", file=sys.stderr)
+            sys.exit(1)
 
         repos = response.json()
         if not repos:
@@ -91,7 +92,7 @@ def fetch_repos() -> list[dict]:
     return projects
 
 
-if __name__ == "__main__":
+def main() -> None:
     if not os.environ.get("GITHUB_TOKEN", "").strip():
         print(
             "Warning: GITHUB_TOKEN is not set. Unauthenticated GitHub API is limited to ~60 requests/hour.\n"
@@ -102,6 +103,9 @@ if __name__ == "__main__":
         )
     print(f"Fetching repos for {GITHUB_USERNAME}...\n")
     projects = fetch_repos()
+    if not projects:
+        print(f"No repos returned; keeping the existing {OUTPUT_PATH.name}.", file=sys.stderr)
+        sys.exit(1)
 
     output = {"github_projects": projects}
 
@@ -112,3 +116,7 @@ if __name__ == "__main__":
     )
 
     print(f"\nDone! {len(projects)} repos saved to {OUTPUT_PATH} (overwritten).")
+
+
+if __name__ == "__main__":
+    main()

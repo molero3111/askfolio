@@ -50,7 +50,7 @@ The app container runs as your host user, so it can write to `secrets/` (Google 
 
 - Add or edit **`resources/json/cv.json`** with your profile (sections above).
 - Add **`resources/json/github_projects.json`** (e.g. run `uv run python scripts/fetch_github_projects.py` with `GITHUB_TOKEN` set to avoid rate limits).
-- Optional: set `INGEST_KNOWLEDGE_JSON` / `INGEST_GITHUB_JSON` in `.env` for custom paths.
+- Optional: set `INGEST_KNOWLEDGE_JSON` / `INGEST_GITHUB_JSON` in `.env` for custom paths, and `INGEST_GITHUB_REPOS` (comma-separated names) to ingest only the repos you want to show.
 
 ### 3. LLM: OpenRouter (default)
 
