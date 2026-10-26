@@ -259,9 +259,13 @@ def _github_index_documents(projects: list) -> list[Document]:
     return docs
 
 
-def documents_from_github_projects(path: Path) -> list[Document]:
+def documents_from_github_projects(path: Path, allowlist: list[str] | None = None) -> list[Document]:
+    """Build GitHub documents; a non-empty allowlist keeps only those repo names (case-insensitive)."""
     data = _load_json(path)
     projects = data.get("github_projects") or []
+    if allowlist:
+        wanted = {name.lower() for name in allowlist}
+        projects = [p for p in projects if isinstance(p, dict) and str(p.get("name", "")).lower() in wanted]
     docs: list[Document] = []
     docs.extend(_github_index_documents(projects))
     for proj in projects:
@@ -293,6 +297,12 @@ def documents_from_github_projects(path: Path) -> list[Document]:
             )
         )
     return docs
+
+
+def missing_repos(docs: list[Document], allowlist: list[str]) -> list[str]:
+    """Allowlisted names with no matching per-repo document (case-insensitive)."""
+    kept = {d.metadata["repo"].lower() for d in docs if d.metadata.get("section") == "github_project"}
+    return [name for name in allowlist if name.lower() not in kept]
 
 
 def split_documents_semantically(

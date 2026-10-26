@@ -22,6 +22,10 @@ def _env_bool(key: str, default: bool = False) -> bool:
     return val in {"1", "true", "yes", "on"}
 
 
+def _name_list(raw: str) -> list[str]:
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 # Tests set ASKFOLIO_SKIP_DOTENV=1 so a developer's real .env is never loaded.
 SKIP_DOTENV = _env_bool("ASKFOLIO_SKIP_DOTENV")
 if not SKIP_DOTENV:
@@ -80,6 +84,8 @@ INGEST_GITHUB_JSON = _env(
     "INGEST_GITHUB_JSON",
     "resources/json/github_projects.json",
 )
+# Comma-separated repo names to ingest from INGEST_GITHUB_JSON; empty ingests every repo
+INGEST_GITHUB_REPOS = _name_list(_env("INGEST_GITHUB_REPOS", ""))
 # How many vector chunks to retrieve per question (higher = more repos/context; default 20)
 RAG_TOP_K = int(_env("RAG_TOP_K", "20"))
 # Seconds to sleep after each poll cycle (getUpdates is long-polling with timeout; this is extra delay between cycles)
