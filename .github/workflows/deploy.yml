@@ -152,7 +152,7 @@ jobs:
         # tailscale/github-action reports success even when every connection attempt failed, which
         # otherwise surfaces minutes later as an ssh timeout.
         run: |
-          if ! timeout 60 bash -c 'until sudo tailscale status --json 2>/dev/null | jq -e ".BackendState == \"Running\"" >/dev/null; do sleep 3; done'; then
+          if ! timeout 60 bash -c 'until sudo tailscale status --json 2>/dev/null | jq -en "input.BackendState == \"Running\"" >/dev/null; do sleep 3; done'; then
             echo "### askfolio deploy: could not connect to the private network; nothing changed" >> "$GITHUB_STEP_SUMMARY"
             echo "::error::could not connect to the private network; check the OAuth client (scope and tag); nothing changed"
             exit 1
@@ -181,7 +181,7 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           set +e
-          printf '%s' "$GITHUB_TOKEN" | ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -E "$RUNNER_TEMP/ssh.log" "deploy@${DEPLOY_HOST}" "askfolio $DEPLOY_SHA" >/dev/null 2>&1
+          printf '%s' "$GITHUB_TOKEN" | ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 -E "$RUNNER_TEMP/ssh.log" "deploy@${DEPLOY_HOST}" "askfolio $DEPLOY_SHA" >/dev/null 2>&1
           rc=$?
           set -e
           case "$rc" in
