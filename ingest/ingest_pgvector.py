@@ -99,7 +99,7 @@ def main():
             # Stop before touching the table: a typo would silently drop a repo the owner wants shown
             print(f"INGEST_GITHUB_REPOS names not in {gh_path.name}: {', '.join(missing)}. Nothing changed.")
             sys.exit(1)
-        print(f"INGEST_GITHUB_REPOS: kept {len(INGEST_GITHUB_REPOS)} repos.")
+        print(f"INGEST_GITHUB_REPOS: kept {len({n.lower() for n in INGEST_GITHUB_REPOS})} repos.")
     all_docs.extend(gh_docs)
     all_docs = scrub_documents(all_docs, contact_values(json.loads(kb_path.read_text(encoding="utf-8"))))
     print(f"Built {len(all_docs)} section-level documents.")
