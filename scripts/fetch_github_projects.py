@@ -61,8 +61,9 @@ def fetch_repos() -> list[dict]:
         )
 
         if response.status_code != 200:
-            print(f"Error fetching repos: {response.status_code}")
-            break
+            # A partial list would overwrite a good file with fewer repos, so stop without writing
+            print(f"Error fetching repos: {response.status_code}; nothing written.", file=sys.stderr)
+            sys.exit(1)
 
         repos = response.json()
         if not repos:
@@ -102,6 +103,9 @@ if __name__ == "__main__":
         )
     print(f"Fetching repos for {GITHUB_USERNAME}...\n")
     projects = fetch_repos()
+    if not projects:
+        print(f"No repos returned; keeping the existing {OUTPUT_PATH.name}.", file=sys.stderr)
+        sys.exit(1)
 
     output = {"github_projects": projects}
 
