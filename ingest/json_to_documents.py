@@ -259,9 +259,13 @@ def _github_index_documents(projects: list) -> list[Document]:
     return docs
 
 
-def documents_from_github_projects(path: Path) -> list[Document]:
+def documents_from_github_projects(path: Path, allowlist: list[str] | None = None) -> list[Document]:
+    """Build GitHub documents; a non-empty allowlist keeps only those repo names (case-insensitive)."""
     data = _load_json(path)
     projects = data.get("github_projects") or []
+    if allowlist:
+        wanted = {name.lower() for name in allowlist}
+        projects = [p for p in projects if isinstance(p, dict) and str(p.get("name", "")).lower() in wanted]
     docs: list[Document] = []
     docs.extend(_github_index_documents(projects))
     for proj in projects:

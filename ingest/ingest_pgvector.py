@@ -20,6 +20,7 @@ from app.config import (
     DB_CONNECTION_URL_ASYNC,
     EMBEDDING_MODEL,
     INGEST_GITHUB_JSON,
+    INGEST_GITHUB_REPOS,
     INGEST_KNOWLEDGE_JSON,
     PGVECTOR_COLLECTION_NAME,
     VECTOR_SIZE,
@@ -90,7 +91,14 @@ def main():
     print(f"Loading documents from:\n  - {kb_path}\n  - {gh_path}")
     all_docs = []
     all_docs.extend(documents_from_knowledge_base(kb_path))
-    all_docs.extend(documents_from_github_projects(gh_path))
+    gh_docs = documents_from_github_projects(gh_path, allowlist=INGEST_GITHUB_REPOS)
+    if INGEST_GITHUB_REPOS:
+        kept = {d.metadata["repo"].lower() for d in gh_docs if d.metadata.get("section") == "github_project"}
+        missing = [name for name in INGEST_GITHUB_REPOS if name.lower() not in kept]
+        print(f"INGEST_GITHUB_REPOS: kept {len(kept)} repos.")
+        if missing:
+            print(f"Warning: not in {gh_path.name}: {', '.join(missing)}")
+    all_docs.extend(gh_docs)
     all_docs = scrub_documents(all_docs, contact_values(json.loads(kb_path.read_text(encoding="utf-8"))))
     print(f"Built {len(all_docs)} section-level documents.")
 
