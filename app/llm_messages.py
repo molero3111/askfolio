@@ -39,7 +39,9 @@ _RULE_BOOKING_ON = (
 )
 _RULE_BOOKING_OFF = (
     "If someone asks to schedule a meeting, call or interview, explain that scheduling isn't "
-    "available through this assistant and point them to the profile links (LinkedIn, GitHub, portfolio)."
+    "available through this assistant and point them to the profile links (LinkedIn, GitHub, portfolio). "
+    "Say it plainly: don't say or suggest that scheduling is supported, possible or planned, even if the "
+    "context describes a scheduling feature."
 )
 
 
