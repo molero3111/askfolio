@@ -1,22 +1,16 @@
 # Deploy askfolio to production when code is merged into the main branch (or on
-# demand from main). The server side is a forced ssh command, reached as
-# `ssh deploy@<host> "askfolio <sha>"`.
+# demand from main).
 # - resolve: decides what ships. A push (or a dispatch without `sha`) builds main HEAD; a
 #   dispatch with `sha` redeploys that existing image (rollback) after the guards in
 #   .github/scripts/resolve-deploy-sha.sh.
 # - ci: runs ci.yml on the same commit; nothing builds or deploys unless it passes.
 #   (workflow_call, not workflow_run: workflow_run runs the default branch's copy of this file.)
-# - build: pushes ghcr.io/molero3111/askfolio:<sha> (amd64). The GHCR package becomes
-#   public after the first verified build.
-# - deploy: joins the tailnet and SSHes to the deploy user, whose forced command takes
-#   "<app> <sha>" with the job token on stdin (so the first pull works while the package is private) and
-#   reports by exit code. The server migrates with the new image, swaps, health-gates with the
-#   compose healthchecks (the app heartbeat and pg_isready) via `up --wait`, and reverts on
-#   failure. There is no HTTP healthcheck yet.
+# - build: pushes ghcr.io/molero3111/askfolio:<sha> (amd64).
+# - deploy: connects over a private network and asks the deploy target to run that image. The
+#   target reports by exit code only; its own output stays off this public log.
 # Secrets live in the "production" environment:
-#   TS_OAUTH_CLIENT_ID, TS_OAUTH_SECRET, DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS,
-#   DEPLOY_HOST (the host stays out of this public repo)
-# No PAT and no build args with secrets: the image needs only runtime env, from the server's .env.
+#   TS_OAUTH_CLIENT_ID, TS_OAUTH_SECRET, DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS, DEPLOY_HOST
+# No PAT and no build args with secrets: the image needs only runtime env, from the target's .env.
 
 name: Deploy production
 
@@ -135,8 +129,7 @@ jobs:
   deploy:
     name: Deploy to production
     runs-on: ubuntu-latest
-    # The server's host lock waits up to 15 min (a nightly backup or another deploy), then the
-    # pull, the migrate step and up to two health gates (new tag, then revert): about 22 min worst case.
+    # Covers the target waiting for a running job to finish, the pull and up to two health gates.
     timeout-minutes: 30
     needs: [resolve, build]
     # A build deploys only after CI and the build passed; a redeploy runs with build skipped.
@@ -155,6 +148,16 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
+      - name: Check the network connection
+        # tailscale/github-action reports success even when every connection attempt failed, which
+        # otherwise surfaces minutes later as an ssh timeout.
+        run: |
+          if ! timeout 60 bash -c 'until sudo tailscale status --json 2>/dev/null | jq -en "input.BackendState == \"Running\"" >/dev/null; do sleep 3; done'; then
+            echo "### askfolio deploy: could not connect to the private network; nothing changed" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::could not connect to the private network; check the OAuth client (scope and tag); nothing changed"
+            exit 1
+          fi
+
       - name: Configure SSH
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -169,8 +172,8 @@ jobs:
 
       - name: Deploy via SSH
         # The image may be private: the job token goes on stdin for this one pull, with no trailing
-        # newline, and never in argv. The server's last output line is its result line; the exit
-        # code decides.
+        # newline, and never in argv. The exit code decides; the target's output is discarded so
+        # this public log shows only the result line below.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEPLOY_SHA: ${{ needs.resolve.outputs.sha }}
@@ -178,19 +181,26 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           set +e
-          printf '%s' "$GITHUB_TOKEN" | ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes "deploy@${DEPLOY_HOST}" "askfolio $DEPLOY_SHA"
+          printf '%s' "$GITHUB_TOKEN" | ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 -E "$RUNNER_TEMP/ssh.log" "deploy@${DEPLOY_HOST}" "askfolio $DEPLOY_SHA" >/dev/null 2>&1
           rc=$?
           set -e
           case "$rc" in
             0) msg="deployed $DEPLOY_SHA ($DEPLOY_MODE), healthy" ;;
-            1) msg="the server's deploy command hit an internal error; check the server" ;;
+            1) msg="the deploy target hit an internal error; check its logs" ;;
             2) msg="refused: bad app or tag; nothing changed" ;;
             3) msg="image pull failed; nothing changed" ;;
-            4) msg="migration failed before the swap; the previous container is still serving" ;;
-            5) msg="new container failed the health gate; reverted to the previous image, which is healthy" ;;
-            6) msg="health gate failed and the revert failed too (or there was no previous image); askfolio is down, a human must look" ;;
-            7) msg="timed out waiting for the host lock; nothing changed" ;;
-            255) msg="ssh failed or the session dropped; if it got as far as the deploy, the server finishes it, so check the deployed tag on the server" ;;
+            4) msg="failed before the switch; the previous version is still serving" ;;
+            5) msg="failed after the switch; rolled back to the previous version" ;;
+            6) msg="failed, and the rollback failed too (or there was no previous version); askfolio is down, a human must look" ;;
+            7) msg="timed out waiting for another job on the target; nothing changed" ;;
+            255)
+              # ssh's own diagnostics went to a file; map them to a fixed reason, never print the file.
+              reason="ssh failed or the session dropped"
+              if grep -q "Host key verification failed" "$RUNNER_TEMP/ssh.log" 2>/dev/null; then reason="host key verification failed (check DEPLOY_KNOWN_HOSTS)"
+              elif grep -q "Permission denied" "$RUNNER_TEMP/ssh.log" 2>/dev/null; then reason="authentication was refused (check DEPLOY_SSH_KEY)"
+              elif grep -qi "timed out" "$RUNNER_TEMP/ssh.log" 2>/dev/null; then reason="the connection timed out (network or access rules)"
+              fi
+              msg="$reason; if it got as far as the deploy, the target finishes it, so check the deployed tag there" ;;
             *) msg="deploy failed with exit code $rc" ;;
           esac
           echo "### askfolio deploy: $msg" >> "$GITHUB_STEP_SUMMARY"
