@@ -129,3 +129,11 @@ def test_prompt_asks_for_plain_text_with_bare_urls():
     assert "Never use Markdown" in s
     assert "bare URL" in s
     assert "markdown link is fine" not in s
+
+
+def test_booking_off_rule_forbids_implying_scheduling(monkeypatch):
+    phrase = "don't say or suggest that scheduling is supported, possible or planned"
+    monkeypatch.setattr("app.llm_messages.BOOKING_ENABLED", False)
+    assert phrase in build_qa_messages("c", "h", "q")[0]["content"]
+    monkeypatch.setattr("app.llm_messages.BOOKING_ENABLED", True)
+    assert phrase not in build_qa_messages("c", "h", "q")[0]["content"]
