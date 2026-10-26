@@ -181,7 +181,7 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           set +e
-          printf '%s' "$GITHUB_TOKEN" | ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes "deploy@${DEPLOY_HOST}" "askfolio $DEPLOY_SHA" >/dev/null 2>&1
+          printf '%s' "$GITHUB_TOKEN" | ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -E "$RUNNER_TEMP/ssh.log" "deploy@${DEPLOY_HOST}" "askfolio $DEPLOY_SHA" >/dev/null 2>&1
           rc=$?
           set -e
           case "$rc" in
@@ -189,11 +189,18 @@ jobs:
             1) msg="the deploy target hit an internal error; check its logs" ;;
             2) msg="refused: bad app or tag; nothing changed" ;;
             3) msg="image pull failed; nothing changed" ;;
-            4) msg="migration failed before the swap; the previous container is still serving" ;;
-            5) msg="new container failed the health gate; reverted to the previous image, which is healthy" ;;
-            6) msg="health gate failed and the revert failed too (or there was no previous image); askfolio is down, a human must look" ;;
+            4) msg="failed before the switch; the previous version is still serving" ;;
+            5) msg="failed after the switch; rolled back to the previous version" ;;
+            6) msg="failed, and the rollback failed too (or there was no previous version); askfolio is down, a human must look" ;;
             7) msg="timed out waiting for another job on the target; nothing changed" ;;
-            255) msg="ssh failed or the session dropped; if it got as far as the deploy, the target finishes it, so check the deployed tag there" ;;
+            255)
+              # ssh's own diagnostics went to a file; map them to a fixed reason, never print the file.
+              reason="ssh failed or the session dropped"
+              if grep -q "Host key verification failed" "$RUNNER_TEMP/ssh.log" 2>/dev/null; then reason="host key verification failed (check DEPLOY_KNOWN_HOSTS)"
+              elif grep -q "Permission denied" "$RUNNER_TEMP/ssh.log" 2>/dev/null; then reason="authentication was refused (check DEPLOY_SSH_KEY)"
+              elif grep -qi "timed out" "$RUNNER_TEMP/ssh.log" 2>/dev/null; then reason="the connection timed out (network or access rules)"
+              fi
+              msg="$reason; if it got as far as the deploy, the target finishes it, so check the deployed tag there" ;;
             *) msg="deploy failed with exit code $rc" ;;
           esac
           echo "### askfolio deploy: $msg" >> "$GITHUB_STEP_SUMMARY"
