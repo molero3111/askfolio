@@ -246,3 +246,18 @@ def test_shutdown_flush_is_time_limited(client):
     analytics.shutdown()
     assert client.flushes and client.flushes[0] is not None and client.flushes[0] <= 5
     assert client.shutdowns == 0
+
+
+@pytest.mark.parametrize(
+    "host,on",
+    [
+        ("https://us.i.posthog.com", True),
+        ("http://us.i.posthog.com", False),
+        ("us.i.posthog.com", False),
+        ("http://127.0.0.1:8000", True),  # a local capture server for testing
+        ("http://localhost:8000", True),
+    ],
+)
+def test_enabled_requires_https_host(client, monkeypatch, host, on):
+    monkeypatch.setattr(config, "POSTHOG_HOST", host)
+    assert analytics.enabled() is on

@@ -128,3 +128,10 @@ def test_scheduling_crash_is_not_tracked(flow, monkeypatch):
 
     assert ("send", 7, graph.ERROR_REPLY) in log
     assert _tracks(log) == []
+
+
+def test_first_seen_runs_after_reply(flow):
+    log, _ = flow
+    _run((7, 1, "What stack?"))
+    kinds = [e[0] for e in log]
+    assert kinds.index("send") < kinds.index("first")

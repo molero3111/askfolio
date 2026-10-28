@@ -230,7 +230,7 @@ Optional, off unless `POSTHOG_KEY` and `ANALYTICS_SALT` are set; sends the quest
 | Var | Purpose |
 |-----|---------|
 | `POSTHOG_KEY` | PostHog project API key |
-| `POSTHOG_HOST` | PostHog host (default `https://us.i.posthog.com`) |
+| `POSTHOG_HOST` | PostHog host (default `https://us.i.posthog.com`); must be `https://`, or analytics stays off |
 | `ANALYTICS_SALT` | Secret for hashing chat ids into anonymous ids (`openssl rand -hex 32`) |
 | `ANALYTICS_ENV` | `environment` property on every event (default `local`) |
 | `ANALYTICS_INTERNAL_CHAT_IDS` | Comma-separated chat ids whose events are tagged `is_internal` |

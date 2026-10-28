@@ -453,7 +453,9 @@ def process_message_node(state: AgentState) -> dict:
         is_qa = not _routes_to_scheduling(
             ConversationState.from_dict(conversations.get(str(chat_id), {})), user_input
         )
-        return _process_first(pending, conversations)
+        result = _process_first(pending, conversations)
+        _track(analytics.track_first_seen, chat_id)
+        return result
     except Exception as exc:
         if is_langsmith_exception(exc):
             # Let run_once see it and switch tracing off instead of failing every Q&A.
@@ -466,6 +468,7 @@ def process_message_node(state: AgentState) -> dict:
         _send_telegram(chat_id, ERROR_REPLY, reply_to_message_id)
         if is_qa:
             _track(analytics.track_question, chat_id, user_input, "error")
+        _track(analytics.track_first_seen, chat_id)
         return {"pending_messages": pending[1:], "conversations": conversations}
 
 
@@ -480,7 +483,6 @@ def _process_first(pending: list, conversations: dict) -> dict:
         len(user_input),
     )
 
-    _track(analytics.track_first_seen, chat_id)
     key = str(chat_id)
     conv = ConversationState.from_dict(conversations.get(key, {}))
 

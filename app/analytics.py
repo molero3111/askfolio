@@ -6,6 +6,7 @@ tests can monkeypatch it.
 import hashlib
 import hmac
 import logging
+from urllib.parse import urlparse
 
 from posthog import Posthog
 
@@ -24,8 +25,26 @@ _client = None
 _seen: set[str] | None = None
 
 
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_warned_host = False
+
+
+def _host_ok(host: str) -> bool:
+    # The key and the question text travel in the request: https only, except a local test server
+    url = urlparse(host)
+    return url.scheme == "https" or (url.scheme == "http" and url.hostname in _LOCAL_HOSTS)
+
+
 def enabled() -> bool:
-    return bool(config.POSTHOG_KEY and config.ANALYTICS_SALT)
+    global _warned_host
+    if not (config.POSTHOG_KEY and config.ANALYTICS_SALT):
+        return False
+    if not _host_ok(config.POSTHOG_HOST):
+        if not _warned_host:
+            logger.warning("Analytics off: POSTHOG_HOST must be an https:// URL")
+            _warned_host = True
+        return False
+    return True
 
 
 def distinct_id(chat_id: int | str) -> str:
