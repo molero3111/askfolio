@@ -10,6 +10,7 @@ import logging
 from posthog import Posthog
 
 from app import config
+from app.secure_io import atomic_write_secret
 from ingest.scrub import scrub_text
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,8 @@ PROJECT_SOURCE = "askfolio"
 QUESTION_MAX_CHARS = 500
 
 _client = None
+# Hashed ids of chats already seen; loaded from SEEN_CHATS_FILE on first use
+_seen: set[str] | None = None
 
 
 def enabled() -> bool:
@@ -87,6 +90,41 @@ def track_question(
         logger.warning("Analytics could not prepare question_asked (%s)", type(e).__name__)
         return
     _capture("question_asked", chat_id, properties)
+
+
+def _load_seen() -> set[str]:
+    try:
+        text = config.resolve_path(config.SEEN_CHATS_FILE).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return set()
+    except (OSError, UnicodeDecodeError) as e:
+        # At worst a first-seen event repeats once
+        logger.warning("Could not read the seen-chats file (%s); starting empty", type(e).__name__)
+        return set()
+    return {line.strip() for line in text.splitlines() if line.strip()}
+
+
+def track_first_seen(chat_id: int | str) -> None:
+    """Capture recruiter_first_seen the first time a chat writes. Only hashed ids are stored."""
+    global _seen
+    if not enabled():
+        return
+    try:
+        if _seen is None:
+            _seen = _load_seen()
+        did = distinct_id(chat_id)
+        if did in _seen:
+            return
+        _seen.add(did)
+        try:
+            path = config.resolve_path(config.SEEN_CHATS_FILE)
+            atomic_write_secret(path, "".join(f"{s}\n" for s in sorted(_seen)))
+        except OSError as e:
+            logger.warning("Could not save the seen-chats file (%s)", type(e).__name__)
+    except Exception as e:
+        logger.warning("Analytics first-seen check failed (%s)", type(e).__name__)
+        return
+    _capture("recruiter_first_seen", chat_id, {})
 
 
 def shutdown() -> None:

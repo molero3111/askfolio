@@ -162,3 +162,54 @@ def test_redaction_covers_analytics_secrets(monkeypatch):
 
     assert KEY in installed
     assert "salt-value-xyz" in installed
+
+
+@pytest.fixture
+def seen_file(client, monkeypatch, tmp_path):
+    path = tmp_path / "state" / "seen_chats"
+    monkeypatch.setattr(config, "SEEN_CHATS_FILE", str(path))
+    monkeypatch.setattr(analytics, "_seen", None)
+    return path
+
+
+def test_first_seen_once_per_chat(client, seen_file):
+    analytics.track_first_seen(42)
+    analytics.track_first_seen(42)
+    assert [c[0] for c in client.captures] == ["recruiter_first_seen"]
+
+    analytics.track_first_seen(43)
+    assert len(client.captures) == 2
+    props = client.captures[1][2]
+    assert props["project_source"] == "askfolio"
+    assert "question" not in props
+
+
+def test_first_seen_persists_hashed_ids(client, seen_file, monkeypatch):
+    analytics.track_first_seen(42)
+
+    lines = seen_file.read_text().splitlines()
+    assert analytics.distinct_id(42) in lines
+    assert "42" not in lines
+
+    monkeypatch.setattr(analytics, "_seen", None)  # a restarted process
+    analytics.track_first_seen(42)
+    assert len(client.captures) == 1
+
+
+@pytest.mark.parametrize("bad", ["directory", "garbage"])
+def test_first_seen_survives_bad_file(client, seen_file, bad):
+    seen_file.parent.mkdir(parents=True)
+    if bad == "directory":
+        seen_file.mkdir()
+    else:
+        seen_file.write_bytes(b"\xff\xfe\x00\x81garbage")
+
+    analytics.track_first_seen(42)
+    assert len(client.captures) == 1
+
+
+def test_first_seen_disabled_writes_nothing(seen_file, monkeypatch):
+    monkeypatch.setattr(config, "POSTHOG_KEY", "")
+    analytics.track_first_seen(42)
+    assert not seen_file.exists()
+    assert not seen_file.parent.exists()
