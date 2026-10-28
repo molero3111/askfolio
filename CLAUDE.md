@@ -52,6 +52,7 @@ app/config.py         — all env var reads (also loads .env unless ASKFOLIO_SKI
 app/llm_client.py     — OpenRouter-aware chat completions client with fallback models and typed errors
 app/llm_messages.py   — builds the Q&A/timezone message lists; sanitizes input; fills {scheduling_hint} from BOOKING_ENABLED
 app/rate_limit.py     — in-memory MessageLimiter / BookingLimiter
+app/analytics.py      — optional PostHog events (question_asked, recruiter_first_seen); off unless POSTHOG_KEY and ANALYTICS_SALT are set; never raises
 app/heartbeat.py      — touches HEARTBEAT_FILE each cycle (stdlib only)
 app/healthcheck.py    — `python -m app.healthcheck`: exit 0 if the heartbeat is fresh (container healthcheck)
 app/log_redact.py     — logging filter and excepthook that keep secrets out of logs

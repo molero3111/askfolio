@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from collections.abc import Sequence
 from datetime import UTC
 from typing import TypedDict
@@ -7,7 +8,7 @@ from typing import TypedDict
 import requests
 from langgraph.graph import END, START, StateGraph
 
-from app import heartbeat
+from app import analytics, heartbeat
 from app.calendar_client import (
     create_meeting,
     format_slot_label,
@@ -65,13 +66,26 @@ _message_limiter = MessageLimiter(
 )
 
 
-def _message_allowed(chat_id: int, message_id: int) -> bool:
-    """Gate an LLM-backed path. Notifies once on refusal; later refusals are silent."""
+def _track(fn, *args, **kwargs) -> None:
+    """Call an analytics function; it never raises, but a bug there must not cost a reply."""
+    try:
+        fn(*args, **kwargs)
+    except Exception:
+        logger.warning("[analytics] %s failed", getattr(fn, "__name__", "call"))
+
+
+def _message_allowed(chat_id: int, message_id: int, question: str | None = None) -> bool:
+    """Gate an LLM-backed path. Notifies once on refusal; later refusals are silent.
+
+    A refused Q&A question (passed as question) is tracked; scheduling refusals are not.
+    """
     result = _message_limiter.check(str(chat_id))
     if result.decision is Decision.ALLOWED:
         return True
     if result.decision is Decision.LIMITED_NOTIFY:
         _send_telegram(chat_id, _LIMIT_REPLIES.get(result.scope, RATE_LIMIT_REPLY), message_id)
+    if question is not None:
+        _track(analytics.track_question, chat_id, question, "rate_limited", scope=result.scope)
     return False
 
 _SCHEDULING_KEYWORDS = frozenset(
@@ -92,6 +106,13 @@ _CANCEL_KEYWORDS = frozenset(
 def _is_scheduling_intent(text: str) -> bool:
     lower = text.lower()
     return any(kw in lower for kw in _SCHEDULING_KEYWORDS)
+
+
+def _routes_to_scheduling(conv: ConversationState, text: str) -> bool:
+    """True when this message goes to the scheduling flow rather than Q&A."""
+    in_scheduling_flow = conv.mode not in (SchedulingMode.IDLE, SchedulingMode.CANCELLED)
+    # With booking off, keyword intent must not hijack Q&A ("can we talk about Python?").
+    return in_scheduling_flow or (BOOKING_ENABLED and _is_scheduling_intent(text))
 
 
 def _is_cancel_intent(text: str) -> bool:
@@ -425,9 +446,16 @@ def process_message_node(state: AgentState) -> dict:
         return {"pending_messages": []}
 
     conversations: dict = dict(state.get("conversations") or {})
-    chat_id, reply_to_message_id, _ = pending[0]
+    chat_id, reply_to_message_id, user_input = pending[0]
+    is_qa = False
     try:
-        return _process_first(pending, conversations)
+        # Scheduling replies can carry a recruiter's name: only Q&A crashes are tracked
+        is_qa = not _routes_to_scheduling(
+            ConversationState.from_dict(conversations.get(str(chat_id), {})), user_input
+        )
+        result = _process_first(pending, conversations)
+        _track(analytics.track_first_seen, chat_id)
+        return result
     except Exception as exc:
         if is_langsmith_exception(exc):
             # Let run_once see it and switch tracing off instead of failing every Q&A.
@@ -438,6 +466,9 @@ def process_message_node(state: AgentState) -> dict:
             reply_to_message_id,
         )
         _send_telegram(chat_id, ERROR_REPLY, reply_to_message_id)
+        if is_qa:
+            _track(analytics.track_question, chat_id, user_input, "error")
+        _track(analytics.track_first_seen, chat_id)
         return {"pending_messages": pending[1:], "conversations": conversations}
 
 
@@ -457,8 +488,7 @@ def _process_first(pending: list, conversations: dict) -> dict:
 
     # Route to scheduling if already in a scheduling flow or intent detected
     in_scheduling_flow = conv.mode not in (SchedulingMode.IDLE, SchedulingMode.CANCELLED)
-    # With booking off, keyword intent must not hijack Q&A ("can we talk about Python?").
-    if in_scheduling_flow or (BOOKING_ENABLED and _is_scheduling_intent(user_input)):
+    if _routes_to_scheduling(conv, user_input):
         if not in_scheduling_flow and not _message_allowed(chat_id, reply_to_message_id):
             # Cheap non-LLM path, but still capped so it can't hammer the calendar API.
             conversations[key] = conv.to_dict()
@@ -468,7 +498,7 @@ def _process_first(pending: list, conversations: dict) -> dict:
         conversations[key] = conv.to_dict()
         return {"pending_messages": pending[1:], "conversations": conversations}
 
-    if not _message_allowed(chat_id, reply_to_message_id):
+    if not _message_allowed(chat_id, reply_to_message_id, user_input):
         conversations[key] = conv.to_dict()
         return {"pending_messages": pending[1:], "conversations": conversations}
 
@@ -498,24 +528,34 @@ def _process_first(pending: list, conversations: dict) -> dict:
                 "context_retrieved": context[:6000],
             },
         ):
+            latency_ms = None
             try:
+                started = time.monotonic()
                 raw = _call_llm(messages)
                 reply = to_plain_text(_strip_reasoning(raw))
-                if not reply:
+                if reply:
+                    outcome = "answered"
+                    latency_ms = int((time.monotonic() - started) * 1000)
+                else:
                     logger.warning("[process_message] LLM reply empty after stripping reasoning")
                     reply = ERROR_REPLY
+                    outcome = "error"
                 logger.info("[process_message] LLM reply length=%s chars", len(reply))
             except (LLMCreditExhausted, LLMUnavailable) as e:
                 reply = UNAVAILABLE_REPLY
+                outcome = "llm_unavailable"
                 logger.error("[process_message] LLM unavailable: %s", e)
             except Exception as e:
                 reply = ERROR_REPLY
+                outcome = "error"
                 logger.exception("[process_message] LLM request failed: %s", e)
             _send_telegram(chat_id, reply, reply_to_message_id)
 
     conv.add_message("user", user_input)
     conv.add_message("assistant", reply)
     conversations[key] = conv.to_dict()
+    # Last step: a failure above is tracked once, as an error, by process_message_node
+    _track(analytics.track_question, chat_id, user_input, outcome, latency_ms=latency_ms)
     return {"pending_messages": pending[1:], "conversations": conversations}
 
 
