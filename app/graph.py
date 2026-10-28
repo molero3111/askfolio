@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from collections.abc import Sequence
 from datetime import UTC
 from typing import TypedDict
@@ -7,7 +8,7 @@ from typing import TypedDict
 import requests
 from langgraph.graph import END, START, StateGraph
 
-from app import heartbeat
+from app import analytics, heartbeat
 from app.calendar_client import (
     create_meeting,
     format_slot_label,
@@ -65,13 +66,26 @@ _message_limiter = MessageLimiter(
 )
 
 
-def _message_allowed(chat_id: int, message_id: int) -> bool:
-    """Gate an LLM-backed path. Notifies once on refusal; later refusals are silent."""
+def _track(fn, *args, **kwargs) -> None:
+    """Call an analytics function; it never raises, but a bug there must not cost a reply."""
+    try:
+        fn(*args, **kwargs)
+    except Exception:
+        logger.warning("[analytics] %s failed", getattr(fn, "__name__", "call"))
+
+
+def _message_allowed(chat_id: int, message_id: int, question: str | None = None) -> bool:
+    """Gate an LLM-backed path. Notifies once on refusal; later refusals are silent.
+
+    A refused Q&A question (passed as question) is tracked; scheduling refusals are not.
+    """
     result = _message_limiter.check(str(chat_id))
     if result.decision is Decision.ALLOWED:
         return True
     if result.decision is Decision.LIMITED_NOTIFY:
         _send_telegram(chat_id, _LIMIT_REPLIES.get(result.scope, RATE_LIMIT_REPLY), message_id)
+    if question is not None:
+        _track(analytics.track_question, chat_id, question, "rate_limited", scope=result.scope)
     return False
 
 _SCHEDULING_KEYWORDS = frozenset(
@@ -425,7 +439,7 @@ def process_message_node(state: AgentState) -> dict:
         return {"pending_messages": []}
 
     conversations: dict = dict(state.get("conversations") or {})
-    chat_id, reply_to_message_id, _ = pending[0]
+    chat_id, reply_to_message_id, user_input = pending[0]
     try:
         return _process_first(pending, conversations)
     except Exception as exc:
@@ -438,6 +452,7 @@ def process_message_node(state: AgentState) -> dict:
             reply_to_message_id,
         )
         _send_telegram(chat_id, ERROR_REPLY, reply_to_message_id)
+        _track(analytics.track_question, chat_id, user_input, "error")
         return {"pending_messages": pending[1:], "conversations": conversations}
 
 
@@ -452,6 +467,7 @@ def _process_first(pending: list, conversations: dict) -> dict:
         len(user_input),
     )
 
+    _track(analytics.track_first_seen, chat_id)
     key = str(chat_id)
     conv = ConversationState.from_dict(conversations.get(key, {}))
 
@@ -468,7 +484,7 @@ def _process_first(pending: list, conversations: dict) -> dict:
         conversations[key] = conv.to_dict()
         return {"pending_messages": pending[1:], "conversations": conversations}
 
-    if not _message_allowed(chat_id, reply_to_message_id):
+    if not _message_allowed(chat_id, reply_to_message_id, user_input):
         conversations[key] = conv.to_dict()
         return {"pending_messages": pending[1:], "conversations": conversations}
 
@@ -498,20 +514,29 @@ def _process_first(pending: list, conversations: dict) -> dict:
                 "context_retrieved": context[:6000],
             },
         ):
+            latency_ms = None
             try:
+                started = time.monotonic()
                 raw = _call_llm(messages)
                 reply = to_plain_text(_strip_reasoning(raw))
-                if not reply:
+                if reply:
+                    outcome = "answered"
+                    latency_ms = int((time.monotonic() - started) * 1000)
+                else:
                     logger.warning("[process_message] LLM reply empty after stripping reasoning")
                     reply = ERROR_REPLY
+                    outcome = "error"
                 logger.info("[process_message] LLM reply length=%s chars", len(reply))
             except (LLMCreditExhausted, LLMUnavailable) as e:
                 reply = UNAVAILABLE_REPLY
+                outcome = "llm_unavailable"
                 logger.error("[process_message] LLM unavailable: %s", e)
             except Exception as e:
                 reply = ERROR_REPLY
+                outcome = "error"
                 logger.exception("[process_message] LLM request failed: %s", e)
             _send_telegram(chat_id, reply, reply_to_message_id)
+            _track(analytics.track_question, chat_id, user_input, outcome, latency_ms=latency_ms)
 
     conv.add_message("user", user_input)
     conv.add_message("assistant", reply)
