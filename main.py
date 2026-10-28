@@ -6,6 +6,7 @@ import time
 
 from app import heartbeat
 from app.config import (
+    ANALYTICS_SALT,
     LANGSMITH_API_KEY,
     LANGSMITH_ENABLED,
     LANGSMITH_ENDPOINT,
@@ -14,6 +15,7 @@ from app.config import (
     LLM_API_KEY,
     LLM_MODEL,
     POLL_INTERVAL_SECONDS,
+    POSTHOG_KEY,
     TELEGRAM_BOT_TOKEN,
 )
 from app.graph import build_graph
@@ -44,7 +46,7 @@ def configure_process() -> None:
     )
     # Google OAuth client secret / refresh token are only read lazily from secrets/ when
     # booking runs, so they are not in memory at startup and are not listed here.
-    install_redaction([TELEGRAM_BOT_TOKEN, LLM_API_KEY, LANGSMITH_API_KEY])
+    install_redaction([TELEGRAM_BOT_TOKEN, LLM_API_KEY, LANGSMITH_API_KEY, POSTHOG_KEY, ANALYTICS_SALT])
     install_excepthook()
     logging.captureWarnings(True)  # route warnings.warn through the filtered handlers
 
