@@ -213,3 +213,24 @@ def test_first_seen_disabled_writes_nothing(seen_file, monkeypatch):
     analytics.track_first_seen(42)
     assert not seen_file.exists()
     assert not seen_file.parent.exists()
+
+
+def test_main_flushes_analytics_on_exit(monkeypatch):
+    import main
+
+    calls = []
+    monkeypatch.setattr(main, "configure_process", lambda: None)
+    monkeypatch.setattr(main.signal, "signal", lambda *a: None)
+    monkeypatch.setattr(main, "startup", lambda: None)
+    monkeypatch.setattr(main, "build_graph", lambda: object())
+    monkeypatch.setattr(main, "load_offset", lambda: None)
+
+    def stop(graph, state):
+        raise SystemExit(0)  # what handle_sigterm raises
+
+    monkeypatch.setattr(main, "run_once", stop)
+    monkeypatch.setattr(main.analytics, "shutdown", lambda: calls.append("shutdown"))
+
+    with pytest.raises(SystemExit):
+        main.main()
+    assert calls == ["shutdown"]

@@ -4,7 +4,7 @@ import os
 import signal
 import time
 
-from app import heartbeat
+from app import analytics, heartbeat
 from app.config import (
     ANALYTICS_SALT,
     LANGSMITH_API_KEY,
@@ -115,13 +115,17 @@ def main():
         "enabled" if LANGSMITH_ENABLED else "disabled",
         LANGSMITH_PROJECT,
     )
-    startup()
-    graph = build_graph()
-    state: dict = {"offset": load_offset(), "pending_messages": [], "conversations": {}}
-    while True:
-        state = run_once(graph, state)
-        if POLL_INTERVAL_SECONDS:
-            time.sleep(POLL_INTERVAL_SECONDS)
+    try:
+        startup()
+        graph = build_graph()
+        state: dict = {"offset": load_offset(), "pending_messages": [], "conversations": {}}
+        while True:
+            state = run_once(graph, state)
+            if POLL_INTERVAL_SECONDS:
+                time.sleep(POLL_INTERVAL_SECONDS)
+    finally:
+        # SIGTERM raises SystemExit, so queued analytics events are flushed on deploy too
+        analytics.shutdown()
 
 
 if __name__ == "__main__":

@@ -223,6 +223,26 @@ In-memory limits (reset on restart; day windows are UTC calendar days). A messag
 - **Privacy check:** `uv run python scripts/check_index_pii.py` fails (exit 1) if the owner's email or phone from the knowledge JSON is still present in the vector table. It prints only match counts, never the values.
 - **Production compose:** `deploy/compose.yml` is the production stack. It pulls the app image from GHCR (`IMAGE_TAG`), takes host paths from `ASKFOLIO_*` env vars (`ASKFOLIO_STATE_DIR`, `ASKFOLIO_RESOURCES_DIR`, `ASKFOLIO_DB_DIR`), and runs the app read-only with all capabilities dropped. CI and deploy live in `.github/workflows`.
 
+## Usage analytics (optional)
+
+Optional, off unless `POSTHOG_KEY` and `ANALYTICS_SALT` are set; sends the question with emails and phone numbers removed, an anonymous id, and the outcome; never the answer.
+
+| Var | Purpose |
+|-----|---------|
+| `POSTHOG_KEY` | PostHog project API key |
+| `POSTHOG_HOST` | PostHog host (default `https://us.i.posthog.com`) |
+| `ANALYTICS_SALT` | Secret for hashing chat ids into anonymous ids (`openssl rand -hex 32`) |
+| `ANALYTICS_ENV` | `environment` property on every event (default `local`) |
+| `ANALYTICS_INTERNAL_CHAT_IDS` | Comma-separated chat ids whose events are tagged `is_internal` |
+| `SEEN_CHATS_FILE` | Hashed ids of chats already seen (default `data/seen_chats`) |
+
+Events:
+
+- `question_asked`: `question`, `outcome` (`answered`, `rate_limited`, `llm_unavailable` or `error`), `rate_limit_scope` when rate-limited, `latency_ms` when answered.
+- `recruiter_first_seen`: the first message from a chat.
+
+Every event carries `project_source`, `environment` and `is_internal`, with no IP and no person profile. Queued events are flushed when the bot stops.
+
 ## LangSmith tracing (optional)
 
 This bot can send traces to LangSmith for better observability (runs, nested spans, latency, errors).
