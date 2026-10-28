@@ -135,3 +135,14 @@ def test_first_seen_runs_after_reply(flow):
     _run((7, 1, "What stack?"))
     kinds = [e[0] for e in log]
     assert kinds.index("send") < kinds.index("first")
+
+
+def test_failure_after_reply_is_counted_once(flow, monkeypatch):
+    log, _ = flow
+
+    def broken(self, role, content):
+        raise RuntimeError("history bug")
+
+    monkeypatch.setattr(graph.ConversationState, "add_message", broken)
+    _run((7, 1, "What stack?"))
+    assert len(_tracks(log)) == 1

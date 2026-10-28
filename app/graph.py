@@ -550,11 +550,12 @@ def _process_first(pending: list, conversations: dict) -> dict:
                 outcome = "error"
                 logger.exception("[process_message] LLM request failed: %s", e)
             _send_telegram(chat_id, reply, reply_to_message_id)
-            _track(analytics.track_question, chat_id, user_input, outcome, latency_ms=latency_ms)
 
     conv.add_message("user", user_input)
     conv.add_message("assistant", reply)
     conversations[key] = conv.to_dict()
+    # Last step: a failure above is tracked once, as an error, by process_message_node
+    _track(analytics.track_question, chat_id, user_input, outcome, latency_ms=latency_ms)
     return {"pending_messages": pending[1:], "conversations": conversations}
 
 
