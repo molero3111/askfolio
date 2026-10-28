@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 PROJECT_SOURCE = "askfolio"
 QUESTION_MAX_CHARS = 500
+SHUTDOWN_FLUSH_SECONDS = 3
 
 _client = None
 # Hashed ids of chats already seen; loaded from SEEN_CHATS_FILE on first use
@@ -128,12 +129,16 @@ def track_first_seen(chat_id: int | str) -> None:
 
 
 def shutdown() -> None:
-    """Flush queued events and stop the client. Safe when disabled or called twice."""
+    """Flush queued events, time-limited. Safe when disabled or called twice.
+
+    Not client.shutdown(): it drains with no timeout, so an unreachable PostHog would hold
+    the process past docker's stop grace. posthog's own atexit hook stops the workers.
+    """
     global _client
     client, _client = _client, None
     if client is None:
         return
     try:
-        client.shutdown()
+        client.flush(timeout_seconds=SHUTDOWN_FLUSH_SECONDS)
     except Exception as e:
         logger.warning("Analytics shutdown failed (%s)", type(e).__name__)

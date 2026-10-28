@@ -14,6 +14,7 @@ class FakeClient:
     def __init__(self, fail: bool = False):
         self.captures: list[tuple[str, str, dict]] = []
         self.shutdowns = 0
+        self.flushes: list = []
         self.fail = fail
 
     def capture(self, event, distinct_id=None, properties=None):
@@ -23,6 +24,9 @@ class FakeClient:
 
     def shutdown(self):
         self.shutdowns += 1
+
+    def flush(self, timeout_seconds=None):
+        self.flushes.append(timeout_seconds)
 
 
 @pytest.fixture
@@ -120,7 +124,7 @@ def test_capture_failure_is_swallowed(client, caplog):
 def test_shutdown_is_safe(client, monkeypatch):
     analytics.shutdown()
     analytics.shutdown()
-    assert client.shutdowns == 1
+    assert len(client.flushes) == 1
 
     monkeypatch.setattr(config, "POSTHOG_KEY", "")
     analytics.shutdown()  # disabled and no client: nothing to do
@@ -144,6 +148,7 @@ def test_client_is_async_with_short_timeout(monkeypatch):
     assert seen["host"] == "https://ph.example.test"
     assert seen["timeout"] == 5
     assert seen["max_queue_size"] == 1000
+    assert seen["max_retries"] == 1
     assert not seen.get("sync_mode")
 
 
@@ -234,3 +239,10 @@ def test_main_flushes_analytics_on_exit(monkeypatch):
     with pytest.raises(SystemExit):
         main.main()
     assert calls == ["shutdown"]
+
+
+def test_shutdown_flush_is_time_limited(client):
+    # posthog's shutdown() drains with no timeout; a stop must fit in docker's 10s grace
+    analytics.shutdown()
+    assert client.flushes and client.flushes[0] is not None and client.flushes[0] <= 5
+    assert client.shutdowns == 0

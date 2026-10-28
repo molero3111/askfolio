@@ -108,6 +108,13 @@ def _is_scheduling_intent(text: str) -> bool:
     return any(kw in lower for kw in _SCHEDULING_KEYWORDS)
 
 
+def _routes_to_scheduling(conv: ConversationState, text: str) -> bool:
+    """True when this message goes to the scheduling flow rather than Q&A."""
+    in_scheduling_flow = conv.mode not in (SchedulingMode.IDLE, SchedulingMode.CANCELLED)
+    # With booking off, keyword intent must not hijack Q&A ("can we talk about Python?").
+    return in_scheduling_flow or (BOOKING_ENABLED and _is_scheduling_intent(text))
+
+
 def _is_cancel_intent(text: str) -> bool:
     lower = text.lower()
     return any(kw in lower for kw in _CANCEL_KEYWORDS)
@@ -440,7 +447,12 @@ def process_message_node(state: AgentState) -> dict:
 
     conversations: dict = dict(state.get("conversations") or {})
     chat_id, reply_to_message_id, user_input = pending[0]
+    is_qa = False
     try:
+        # Scheduling replies can carry a recruiter's name: only Q&A crashes are tracked
+        is_qa = not _routes_to_scheduling(
+            ConversationState.from_dict(conversations.get(str(chat_id), {})), user_input
+        )
         return _process_first(pending, conversations)
     except Exception as exc:
         if is_langsmith_exception(exc):
@@ -452,7 +464,8 @@ def process_message_node(state: AgentState) -> dict:
             reply_to_message_id,
         )
         _send_telegram(chat_id, ERROR_REPLY, reply_to_message_id)
-        _track(analytics.track_question, chat_id, user_input, "error")
+        if is_qa:
+            _track(analytics.track_question, chat_id, user_input, "error")
         return {"pending_messages": pending[1:], "conversations": conversations}
 
 
@@ -473,8 +486,7 @@ def _process_first(pending: list, conversations: dict) -> dict:
 
     # Route to scheduling if already in a scheduling flow or intent detected
     in_scheduling_flow = conv.mode not in (SchedulingMode.IDLE, SchedulingMode.CANCELLED)
-    # With booking off, keyword intent must not hijack Q&A ("can we talk about Python?").
-    if in_scheduling_flow or (BOOKING_ENABLED and _is_scheduling_intent(user_input)):
+    if _routes_to_scheduling(conv, user_input):
         if not in_scheduling_flow and not _message_allowed(chat_id, reply_to_message_id):
             # Cheap non-LLM path, but still capped so it can't hammer the calendar API.
             conversations[key] = conv.to_dict()

@@ -113,3 +113,18 @@ def test_analytics_failure_does_not_change_reply(flow, monkeypatch):
     _run((7, 1, "a"), (8, 2, "b"))
 
     assert [e for e in log if e[0] == "send"] == [("send", 7, "An answer."), ("send", 8, "An answer.")]
+
+
+def test_scheduling_crash_is_not_tracked(flow, monkeypatch):
+    # Scheduling replies can hold a recruiter's name; that flow is out of analytics scope
+    log, _ = flow
+    monkeypatch.setattr(graph, "BOOKING_ENABLED", True)
+
+    def boom(*a, **k):
+        raise RuntimeError("calendar bug")
+
+    monkeypatch.setattr(graph, "_handle_scheduling", boom)
+    _run((7, 1, "Can we schedule a meeting?"))
+
+    assert ("send", 7, graph.ERROR_REPLY) in log
+    assert _tracks(log) == []
