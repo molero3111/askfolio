@@ -102,6 +102,18 @@ LANGSMITH_ENABLED = bool(LANGSMITH_API_KEY and LANGSMITH_TRACING)
 LANGSMITH_RUNTIME_FLAG = "ASKFOLIO_LANGSMITH_ENABLED"
 
 
+# PostHog usage analytics (optional): off unless both POSTHOG_KEY and ANALYTICS_SALT are set
+POSTHOG_KEY = _env("POSTHOG_KEY")
+POSTHOG_HOST = _env("POSTHOG_HOST", "https://us.i.posthog.com")
+# Secret for hashing chat ids into anonymous ids; without it ids would be guessable
+ANALYTICS_SALT = _env("ANALYTICS_SALT")
+ANALYTICS_ENV = _env("ANALYTICS_ENV", "local")
+# Chat ids whose events are tagged is_internal (the owner's own tests)
+ANALYTICS_INTERNAL_CHAT_IDS = _name_list(_env("ANALYTICS_INTERNAL_CHAT_IDS", ""))
+# Hashed ids of chats already seen, so first contact is counted once across restarts
+SEEN_CHATS_FILE = _env("SEEN_CHATS_FILE", "data/seen_chats")
+
+
 def is_langsmith_enabled() -> bool:
     """Runtime LangSmith toggle for manual spans (supports fail-open disable)."""
     return _env_bool(LANGSMITH_RUNTIME_FLAG, LANGSMITH_ENABLED)
