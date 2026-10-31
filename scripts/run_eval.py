@@ -256,7 +256,8 @@ def run_case(
         result.error = guard.redact(_hide_secrets(f"{type(exc).__name__}: {exc}"))
         return result
     finally:
-        result.latency_s = round(time.monotonic() - started, 3)
+        if result.status != "MISROUTED":  # no call was made; keep it out of the mean
+            result.latency_s = round(time.monotonic() - started, 3)
         if usage:
             last = usage[-1]
             result.served_model = last.model

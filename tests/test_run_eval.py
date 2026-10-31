@@ -220,6 +220,7 @@ def test_run_case_misrouted(guard, monkeypatch):
 
     result = run_case(_case(question="Can I schedule a call?"), "m", guard, answer=never)
     assert result.status == "MISROUTED"
+    assert result.latency_s is None
 
 
 def test_run_case_redacts_reply(guard):
