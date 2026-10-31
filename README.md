@@ -63,6 +63,7 @@ The bot calls an OpenAI-compatible chat completions endpoint over plain HTTP. Op
 | `LLM_FALLBACK_MODELS` | Comma-separated model IDs tried in order if the primary fails |
 | `LLM_API_KEY` | Your OpenRouter API key |
 | `LLM_DATA_COLLECTION` | `deny` (default) skips providers that may train on prompts |
+| `LLM_PROVIDER_ONLY` | Optional comma-separated OpenRouter provider slugs allowed to serve requests (e.g. `google-ai-studio`); empty allows any. With a provider key added in OpenRouter (BYOK), this keeps requests on your key instead of OpenRouter credits |
 
 Any other OpenAI-compatible endpoint (for example a local Ollama) works by overriding `LLM_API_URL`. The OpenRouter-specific `provider` field and the attribution fields (`LLM_APP_URL`, `LLM_APP_NAME`) are only sent to `openrouter.ai`.
 

@@ -86,6 +86,31 @@ def test_openrouter_payload():
     assert call["headers"]["Authorization"] == "Bearer sk-test"
 
 
+def test_provider_only_restricts_providers(monkeypatch):
+    monkeypatch.setattr(config, "LLM_PROVIDER_ONLY", ["google-ai-studio"])
+    s = FakeSession([ok()])
+    chat(MSGS, session=s, sleep=no_sleep)
+    assert s.calls[0]["json"]["provider"] == {
+        "data_collection": "deny",
+        "only": ["google-ai-studio"],
+    }
+
+
+def test_provider_only_unset_sends_no_restriction(monkeypatch):
+    monkeypatch.setattr(config, "LLM_PROVIDER_ONLY", [])
+    s = FakeSession([ok()])
+    chat(MSGS, session=s, sleep=no_sleep)
+    assert "only" not in s.calls[0]["json"]["provider"]
+
+
+def test_provider_only_not_sent_to_other_endpoints(monkeypatch):
+    monkeypatch.setattr(config, "LLM_API_URL", LOCAL_URL)
+    monkeypatch.setattr(config, "LLM_PROVIDER_ONLY", ["google-ai-studio"])
+    s = FakeSession([ok()])
+    chat(MSGS, session=s, sleep=no_sleep)
+    assert "provider" not in s.calls[0]["json"]
+
+
 def test_non_openrouter_payload(monkeypatch):
     monkeypatch.setattr(config, "LLM_API_URL", LOCAL_URL)
     s = FakeSession([ok()])

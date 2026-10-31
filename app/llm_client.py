@@ -84,6 +84,8 @@ def chat(
     }
     if openrouter:
         payload["provider"] = {"data_collection": config.LLM_DATA_COLLECTION}
+        if config.LLM_PROVIDER_ONLY:
+            payload["provider"]["only"] = list(config.LLM_PROVIDER_ONLY)
         headers["X-OpenRouter-Title"] = config.LLM_APP_NAME
         if config.LLM_APP_URL:
             headers["HTTP-Referer"] = config.LLM_APP_URL
