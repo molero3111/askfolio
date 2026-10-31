@@ -323,3 +323,10 @@ def test_main_bad_inputs_exit_2(run_files, monkeypatch, problem):
         extra = ["--case", "ghost"]
     assert main(["--golden", str(golden), "--cv", str(cv), "--out", str(out), *extra]) == 2
     assert not out.exists()
+
+
+def test_example_golden_loads():
+    cases = load_golden(Path(__file__).resolve().parent.parent / "evals" / "golden.example.yaml")
+    assert len(cases) >= 5
+    categories = {c.category for c in cases}
+    assert {"contact", "injection"} <= categories
