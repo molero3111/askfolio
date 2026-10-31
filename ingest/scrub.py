@@ -21,8 +21,8 @@ _YEAR_RE = re.compile(r"(?:19|20)\d\d")
 
 
 _PCT_AT_TOKEN_RE = re.compile(r"\S*%40\S*", re.IGNORECASE)
-_AT_SEP = r"\s*(?:@|\[at\]|\(at\)|\bat\b)\s*"
-_DOT_SEP = r"(?:\s*(?:\.|\[dot\]|\(dot\)|\bdot\b)\s*)"
+_AT_SEP = r"\s*(?:@|\[at\]|\(at\)|\[@\]|\(@\)|\bat\b|\barroba\b)\s*"
+_DOT_SEP = r"(?:\s*(?:\.|\[dot\]|\(dot\)|\bdot\b|\bpunto\b)\s*)"
 
 
 def normalize(text: str) -> str:

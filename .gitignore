@@ -19,5 +19,5 @@ token.json
 secrets/
 data/
 evals/results/
-evals/golden*.yaml
+evals/*.y*ml
 !evals/golden.example.yaml

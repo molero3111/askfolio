@@ -63,6 +63,7 @@ The bot calls an OpenAI-compatible chat completions endpoint over plain HTTP. Op
 | `LLM_FALLBACK_MODELS` | Comma-separated model IDs tried in order if the primary fails |
 | `LLM_API_KEY` | Your OpenRouter API key |
 | `LLM_DATA_COLLECTION` | `deny` (default) skips providers that may train on prompts |
+| `LLM_PROVIDER_ONLY` | Optional comma-separated OpenRouter provider slugs allowed to serve requests (e.g. `google-ai-studio`); empty allows any. With a provider key added in OpenRouter (BYOK), this prefers your key; also set that BYOK integration to never use OpenRouter's own capacity, so requests are never billed to OpenRouter credits |
 
 Any other OpenAI-compatible endpoint (for example a local Ollama) works by overriding `LLM_API_URL`. The OpenRouter-specific `provider` field and the attribution fields (`LLM_APP_URL`, `LLM_APP_NAME`) are only sent to `openrouter.ai`.
 
@@ -203,6 +204,24 @@ A calendar invite has been sent to jane@company.com.
 
 `LLM_REQUEST_TIMEOUT` defaults to 60 seconds; raise it for slow self-hosted models. Use **`RAG_TOP_K`** to control how many chunks are passed into the prompt (default 20).
 
+## Answer check (eval)
+
+`scripts/run_eval.py` asks the bot's own Q&A path (same retrieval, prompt, `max_tokens` and provider settings) a list of questions and checks each answer for text it must and must not contain. Use it to compare models and to catch regressions after changing prompts, retrieval or the knowledge JSON.
+
+Write a golden YAML file from your own CV; `evals/golden.example.yaml` shows the format. Other `evals/golden*.yaml` files and `evals/results/` are git-ignored. The owner's email and phone from the knowledge JSON are always checked as forbidden (including spellings like `[at]`), and are removed from every reply that is printed or saved, so never write them into the golden file.
+
+It needs the vector table (run the ingest first) and an LLM key, and it calls the paid API, so it is not part of CI. Run it from the host with the localhost database override described in [Running without Docker](#running-without-docker):
+
+```bash
+uv run python scripts/run_eval.py --golden path/to/golden.yaml                 # LLM_MODEL, with fallbacks
+uv run python scripts/run_eval.py --golden path/to/golden.yaml --model a/b --model c/d   # compare, fallbacks off
+uv run python scripts/run_eval.py --golden path/to/golden.yaml --case years-experience  # one case
+```
+
+A case with `language: en` or `language: es` also fails when the reply is in the other language. The runner refuses to start when the knowledge JSON lacks an email or a phone (pass `--allow-missing-contact` to run without that check).
+
+Each case is `PASS`, `FAIL`, `ERROR` (the LLM call failed) or `MISROUTED` (the bot would send this message to the scheduling flow instead; this follows `BOOKING_ENABLED`, and `--booking` checks routing as if it were on). The summary per model counts passed cases, `contact` and `injection` cases, mean latency and cost when the provider reports it. Results are saved to `evals/results/<timestamp>.json`. Exit code: 0 when every case passed, 1 otherwise, 2 for a bad golden file or arguments.
+
 ## Rate limits
 
 In-memory limits (reset on restart; day windows are UTC calendar days). A message over a limit gets one notice, then is ignored silently.
@@ -318,7 +337,10 @@ Full list: [Wikipedia — tz database time zones](https://en.wikipedia.org/wiki/
 ├── scripts/
 │   ├── authorize_calendar.py  # One-time Google OAuth — run locally to generate secrets/token.json
 │   ├── check_index_pii.py     # Fail if owner contact data is in the index
-│   └── fetch_github_projects.py
+│   ├── fetch_github_projects.py
+│   └── run_eval.py            # Answer check against a golden YAML set
+├── evals/
+│   └── golden.example.yaml    # Example golden set (real sets stay out of the repo)
 ├── deploy/compose.yml         # Production stack (GHCR image)
 ├── main.py
 ├── docker-compose.yml         # Dev stack
