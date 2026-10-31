@@ -60,3 +60,25 @@ def test_tracing_error_from_llm_reaches_run_once(monkeypatch):
     state = {"offset": None, "pending_messages": [(1, 10, "hi")], "conversations": {}}
     with pytest.raises(RuntimeError):
         graph.process_message_node(state)
+
+
+def test_retrieval_error_replies_and_keeps_the_turn(monkeypatch):
+    sent, tracked = [], []
+    monkeypatch.setattr(graph, "_send_telegram", lambda chat_id, reply, _m: sent.append(reply))
+    monkeypatch.setattr(analytics, "track_question", lambda *a, **k: tracked.append(a[2]))
+    monkeypatch.setattr(analytics, "track_first_seen", lambda *_a: None)
+
+    def boom(_q):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(graph, "_retrieve_context", boom)
+    state = {"offset": None, "pending_messages": [(1, 10, "hi")], "conversations": {}}
+    out = graph.process_message_node(state)
+
+    assert sent == [graph.ERROR_REPLY]
+    history = out["conversations"]["1"]["history"]
+    assert [(m["role"], m["content"]) for m in history] == [
+        ("user", "hi"),
+        ("assistant", graph.ERROR_REPLY),
+    ]
+    assert tracked == ["error"]

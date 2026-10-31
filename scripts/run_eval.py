@@ -22,7 +22,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app import config, graph
+from app import config, graph, llm_messages
 from app.conversation import ConversationState
 from app.llm_client import LLMResult, chat
 from ingest.scrub import contact_values, normalize, owner_email_pattern, scrub_text
@@ -330,8 +330,12 @@ def main(argv: list[str] | None = None) -> int:
         print("error: the knowledge JSON must be an object", file=sys.stderr)
         return 2
     guard = ContactGuard.from_cv(cv)
+    print(
+        f"contact check: email {'on' if guard.email else 'off'}, "
+        f"phone {'on' if guard.phone_digits else 'off'}"
+    )
     for case in cases:
-        strings = [case.question, *case.must_not_include]
+        strings = [case.question, *case.must_not_include, *(m["content"] for m in case.history)]
         strings += [s for item in case.must_include for s in (item if isinstance(item, list) else [item])]
         if any(guard.leaks(text) for text in strings):
             print(f"error: case {case.id!r} contains an owner contact value; remove it "
@@ -347,7 +351,8 @@ def main(argv: list[str] | None = None) -> int:
         print("error: set LLM_MODEL or pass --model", file=sys.stderr)
         return 2
     if args.booking:
-        graph.BOOKING_ENABLED = True
+        # routing and the prompt's scheduling hint both follow the flag
+        graph.BOOKING_ENABLED = llm_messages.BOOKING_ENABLED = True
     print(f"booking routing: {'on' if graph.BOOKING_ENABLED else 'off'}")
 
     started_at = datetime.now(UTC)

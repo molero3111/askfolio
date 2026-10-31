@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from app import config, graph
+from app import config, graph, llm_messages
 from app.llm_client import LLMResult, LLMUnavailable
 from scripts import run_eval
 from scripts.run_eval import (
@@ -385,3 +385,33 @@ def test_main_results_files_do_not_collide(run_files, monkeypatch):
     main([*_main_args(golden, cv, out), "--model", "m"])
     main([*_main_args(golden, cv, out), "--model", "m"])
     assert len(list(out.iterdir())) == 2
+
+
+def test_main_rejects_contact_values_in_history(tmp_path, monkeypatch):
+    golden = _write(
+        tmp_path,
+        [{"id": "h", "question": "q", "history": [{"role": "user", "content": f"I wrote to {EMAIL}"}]}],
+    )
+    cv = tmp_path / "cv.json"
+    cv.write_text(json.dumps(CV))
+    monkeypatch.setattr(run_eval, "run_case", lambda *a: pytest.fail("ran a case"))
+    assert main([*_main_args(golden, cv, tmp_path / "results"), "--model", "m"]) == 2
+
+
+@pytest.mark.parametrize("cv_data,expected", [(CV, "contact check: email on, phone on"),
+                                              ({}, "contact check: email off, phone off")])
+def test_main_reports_contact_guard_state(run_files, monkeypatch, capsys, cv_data, expected):
+    golden, cv, out = run_files
+    cv.write_text(json.dumps(cv_data))
+    monkeypatch.setattr(run_eval, "run_case", lambda case, model, guard: _result(model, "PASS"))
+    main([*_main_args(golden, cv, out), "--model", "m"])
+    assert expected in capsys.readouterr().out
+
+
+def test_main_booking_flag_sets_the_prompt_hint(run_files, monkeypatch):
+    golden, cv, out = run_files
+    monkeypatch.setattr(graph, "BOOKING_ENABLED", False)
+    monkeypatch.setattr(llm_messages, "BOOKING_ENABLED", False)
+    monkeypatch.setattr(run_eval, "run_case", lambda case, model, guard: _result(model, "PASS"))
+    main([*_main_args(golden, cv, out), "--model", "m", "--booking"])
+    assert llm_messages.BOOKING_ENABLED is True
