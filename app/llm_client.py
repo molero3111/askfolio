@@ -113,11 +113,12 @@ def chat(
             lowered = message.lower()
             if "data policy" in lowered or "no endpoints found" in lowered:
                 logger.error(
-                    "[llm] no provider for %s matches data_collection=%s",
+                    "[llm] no provider for %s matches data_collection=%s only=%s",
                     primary,
                     config.LLM_DATA_COLLECTION,
+                    ",".join(config.LLM_PROVIDER_ONLY) or "any",
                 )
-                raise LLMUnavailable("no provider matches the data policy")
+                raise LLMUnavailable("no provider matches the provider policy")
             raise LLMUnavailable(f"LLM request rejected (HTTP {status})")
         if status == 429 or status >= 500:
             if attempt == 0:

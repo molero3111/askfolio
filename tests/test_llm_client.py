@@ -247,9 +247,19 @@ def test_data_policy_error_no_retry(status, msg, caplog):
         chat(MSGS, session=s, sleep=no_sleep)
     assert len(s.calls) == 1
     assert (
-        "[llm] no provider for google/gemma-test:free matches data_collection=deny"
+        "[llm] no provider for google/gemma-test:free matches data_collection=deny only=any"
         in caplog.text
     )
+
+
+def test_provider_policy_error_names_the_allowlist(monkeypatch, caplog):
+    monkeypatch.setattr(config, "LLM_PROVIDER_ONLY", ["google-ai-studio"])
+    s = FakeSession([FakeResponse(404, {"error": {"message": "No endpoints found for x/y."}})])
+    with caplog.at_level(logging.ERROR, logger=llm_client.logger.name), pytest.raises(
+        LLMUnavailable, match="provider policy"
+    ):
+        chat(MSGS, session=s, sleep=no_sleep)
+    assert "only=google-ai-studio" in caplog.text
 
 
 def test_api_key_never_logged(caplog):
