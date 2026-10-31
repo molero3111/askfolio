@@ -46,3 +46,17 @@ def test_answer_question_propagates_llm_errors(monkeypatch):
 
     with pytest.raises(LLMUnavailable):
         graph.answer_question("q", [], call_llm=down)
+
+
+def test_tracing_error_from_llm_reaches_run_once(monkeypatch):
+    # run_once turns tracing off when a LangSmith error escapes the node
+    monkeypatch.setattr(graph, "_retrieve_context", lambda _q: "CTX")
+    monkeypatch.setattr(graph, "_send_telegram", lambda *a: None)
+
+    def boom(_m):
+        raise RuntimeError("langsmith: failed to post run to api.smith.langchain.com")
+
+    monkeypatch.setattr(graph, "_call_llm", boom)
+    state = {"offset": None, "pending_messages": [(1, 10, "hi")], "conversations": {}}
+    with pytest.raises(RuntimeError):
+        graph.process_message_node(state)

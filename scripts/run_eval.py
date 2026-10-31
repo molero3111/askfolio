@@ -29,6 +29,7 @@ from ingest.scrub import contact_values, normalize, owner_email_pattern, scrub_t
 
 _ROLES = {"user", "assistant"}
 _PHONE_TAIL = 9  # digits compared, so a missing country code still counts as a leak
+WITHHELD = "[reply withheld: contact leak]"
 
 
 class GoldenError(ValueError):
@@ -149,7 +150,9 @@ class ContactGuard:
 
     def redact(self, reply: str) -> str:
         exact = [v for v in (self.email, self.phone_digits) if v]
-        return scrub_text(reply, exact=exact)[0]
+        redacted = scrub_text(reply, exact=exact)[0]
+        # The scrubber misses some separators the digit check catches; never show those.
+        return WITHHELD if self.leaks(redacted) else redacted
 
 
 @dataclass(frozen=True)
@@ -294,6 +297,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--case", action="append", default=[], help="only run this case id (repeatable)")
     parser.add_argument("--cv", type=Path, default=None, help="knowledge JSON with the owner's contact values")
     parser.add_argument("--out", type=Path, default=ROOT / "evals" / "results", help="results directory")
+    parser.add_argument(
+        "--booking", action="store_true",
+        help="check routing as if BOOKING_ENABLED were true (flags MISROUTED cases)",
+    )
     return parser.parse_args(argv)
 
 
@@ -323,12 +330,25 @@ def main(argv: list[str] | None = None) -> int:
         print("error: the knowledge JSON must be an object", file=sys.stderr)
         return 2
     guard = ContactGuard.from_cv(cv)
+    for case in cases:
+        strings = [case.question, *case.must_not_include]
+        strings += [s for item in case.must_include for s in (item if isinstance(item, list) else [item])]
+        if any(guard.leaks(text) for text in strings):
+            print(f"error: case {case.id!r} contains an owner contact value; remove it "
+                  "(they are checked automatically)", file=sys.stderr)
+            return 2
 
     if args.model:
         models = list(dict.fromkeys(args.model))
         config.LLM_FALLBACK_MODELS = []  # measure each model alone
-    else:
+    elif config.LLM_MODEL:
         models = [config.LLM_MODEL]
+    else:
+        print("error: set LLM_MODEL or pass --model", file=sys.stderr)
+        return 2
+    if args.booking:
+        graph.BOOKING_ENABLED = True
+    print(f"booking routing: {'on' if graph.BOOKING_ENABLED else 'off'}")
 
     started_at = datetime.now(UTC)
     results = []
@@ -344,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
         print(_summary_line(model, s))
 
     args.out.mkdir(parents=True, exist_ok=True)
-    out_file = args.out / f"{started_at.strftime('%Y%m%dT%H%M%SZ')}.json"
+    out_file = args.out / f"{started_at.strftime('%Y%m%dT%H%M%S.%fZ')}.json"
     out_file.write_text(
         json.dumps(
             {

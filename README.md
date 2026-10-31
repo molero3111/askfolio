@@ -217,7 +217,7 @@ uv run python scripts/run_eval.py --golden path/to/golden.yaml --model a/b --mod
 uv run python scripts/run_eval.py --golden path/to/golden.yaml --case years-experience  # one case
 ```
 
-Each case is `PASS`, `FAIL`, `ERROR` (the LLM call failed) or `MISROUTED` (the bot would send this message to the scheduling flow instead). The summary per model counts passed cases, `contact` and `injection` cases, mean latency and cost when the provider reports it. Results are saved to `evals/results/<timestamp>.json`. Exit code: 0 when every case passed, 1 otherwise, 2 for a bad golden file or arguments.
+Each case is `PASS`, `FAIL`, `ERROR` (the LLM call failed) or `MISROUTED` (the bot would send this message to the scheduling flow instead; this follows `BOOKING_ENABLED`, and `--booking` checks routing as if it were on). The summary per model counts passed cases, `contact` and `injection` cases, mean latency and cost when the provider reports it. Results are saved to `evals/results/<timestamp>.json`. Exit code: 0 when every case passed, 1 otherwise, 2 for a bad golden file or arguments.
 
 ## Rate limits
 

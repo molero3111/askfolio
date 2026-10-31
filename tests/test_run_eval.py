@@ -137,10 +137,22 @@ def test_guard_ignores_years_and_urls(guard):
     assert guard.leaks("2018-2020, github.com/janedoe/repo123") == []
 
 
-def test_redact_hides_values(guard):
-    out = guard.redact(f"Mail {EMAIL} or call {PHONE}")
+@pytest.mark.parametrize(
+    "reply",
+    [
+        f"Mail {EMAIL} or call {PHONE}",
+        "Call 415 \u2013 555 \u2013 0100",
+        "Call 415/555/0100",
+        "Call 415_555_0100",
+        "wa.me/4155550100",
+        "id 4155550100x",
+    ],
+)
+def test_redact_hides_values(guard, reply):
+    out = guard.redact(reply)
     assert "jane.doe" not in out
-    assert "5550100" not in out.replace(" ", "")
+    assert guard.leaks(out) == []
+    assert "5550100" not in "".join(c for c in out if c.isdigit())
 
 
 def test_guard_without_contacts():
@@ -262,6 +274,7 @@ def run_files(tmp_path):
 @pytest.mark.parametrize("reply,code", [(f"Laravel, mail {EMAIL}", 1), ("Laravel", 0)])
 def test_main_writes_results_and_exit_code(run_files, monkeypatch, capsys, reply, code):
     golden, cv, out = run_files
+    monkeypatch.setattr(config, "LLM_MODEL", "prod/model")
     monkeypatch.setattr(
         run_eval, "run_case",
         lambda case, model, guard: run_case(
@@ -330,3 +343,45 @@ def test_example_golden_loads():
     assert len(cases) >= 5
     categories = {c.category for c in cases}
     assert {"contact", "injection"} <= categories
+
+
+def _main_args(golden, cv, out):
+    return ["--golden", str(golden), "--cv", str(cv), "--out", str(out)]
+
+
+def test_main_rejects_contact_values_in_golden(tmp_path, monkeypatch, capsys):
+    golden = _write(tmp_path, [{"id": "a", "question": "q", "must_not_include": ["415 555 0100"]}])
+    cv = tmp_path / "cv.json"
+    cv.write_text(json.dumps(CV))
+    monkeypatch.setattr(run_eval, "run_case", lambda *a: pytest.fail("ran a case"))
+    assert main(_main_args(golden, cv, tmp_path / "results")) == 2
+    captured = capsys.readouterr()
+    assert "'a'" in captured.err
+    assert "555" not in captured.out + captured.err
+
+
+def test_main_requires_a_model(run_files, monkeypatch):
+    golden, cv, out = run_files
+    monkeypatch.setattr(config, "LLM_MODEL", "")
+    monkeypatch.setattr(run_eval, "run_case", lambda *a: pytest.fail("ran a case"))
+    assert main(_main_args(golden, cv, out)) == 2
+
+
+def test_main_booking_flag_enables_routing_check(run_files, monkeypatch):
+    golden, cv, out = run_files
+    monkeypatch.setattr(graph, "BOOKING_ENABLED", False)
+    seen = []
+    monkeypatch.setattr(
+        run_eval, "run_case",
+        lambda case, model, guard: seen.append(graph.BOOKING_ENABLED) or _result(model, "PASS"),
+    )
+    assert main([*_main_args(golden, cv, out), "--model", "m", "--booking"]) == 0
+    assert seen and all(seen)
+
+
+def test_main_results_files_do_not_collide(run_files, monkeypatch):
+    golden, cv, out = run_files
+    monkeypatch.setattr(run_eval, "run_case", lambda case, model, guard: _result(model, "PASS"))
+    main([*_main_args(golden, cv, out), "--model", "m"])
+    main([*_main_args(golden, cv, out), "--model", "m"])
+    assert len(list(out.iterdir())) == 2
