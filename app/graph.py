@@ -1,7 +1,7 @@
 import logging
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC
 from typing import TypedDict
 
@@ -158,6 +158,28 @@ def _retrieve_context(user_input: str) -> str:
 @traceable(name="call_llm_http", run_type="llm")
 def _call_llm(messages: list[dict]) -> str:
     return chat(messages).content
+
+
+def answer_question(
+    user_input: str,
+    history: list[dict],
+    *,
+    call_llm: Callable[[list[dict]], str] | None = None,
+) -> str:
+    """The Q&A path without Telegram: retrieve, prompt, call the LLM, clean the reply.
+
+    Returns "" when nothing is left after cleaning; LLM and retrieval errors propagate.
+    """
+    context = _retrieve_context(user_input)
+    logger.info("[process_message] retrieved context length=%s chars", len(context))
+    messages = build_qa_messages(context, _format_history(history), user_input)
+    with tracing_context(
+        enabled=is_langsmith_enabled(),
+        project_name=LANGSMITH_PROJECT,
+        metadata={"context_length": len(context), "context_retrieved": context[:6000]},
+    ):
+        raw = (call_llm or _call_llm)(messages)
+    return to_plain_text(_strip_reasoning(raw))
 
 
 @traceable(name="telegram_send_message", run_type="tool")
@@ -515,41 +537,29 @@ def _process_first(pending: list, conversations: dict) -> dict:
         tags=["telegram", "recruiter-bot"],
         metadata=trace_meta,
     ):
-        context = _retrieve_context(user_input)
-        logger.info("[process_message] retrieved context length=%s chars", len(context))
-
-        chat_history = _format_history(conv.history)
-        messages = build_qa_messages(context, chat_history, user_input)
-        with tracing_context(
-            enabled=is_langsmith_enabled(),
-            project_name=LANGSMITH_PROJECT,
-            metadata={
-                "context_length": len(context),
-                "context_retrieved": context[:6000],
-            },
-        ):
-            latency_ms = None
-            try:
-                started = time.monotonic()
-                raw = _call_llm(messages)
-                reply = to_plain_text(_strip_reasoning(raw))
-                if reply:
-                    outcome = "answered"
-                    latency_ms = int((time.monotonic() - started) * 1000)
-                else:
-                    logger.warning("[process_message] LLM reply empty after stripping reasoning")
-                    reply = ERROR_REPLY
-                    outcome = "error"
-                logger.info("[process_message] LLM reply length=%s chars", len(reply))
-            except (LLMCreditExhausted, LLMUnavailable) as e:
-                reply = UNAVAILABLE_REPLY
-                outcome = "llm_unavailable"
-                logger.error("[process_message] LLM unavailable: %s", e)
-            except Exception as e:
+        latency_ms = None
+        try:
+            started = time.monotonic()
+            reply = answer_question(user_input, conv.history)
+            if reply:
+                outcome = "answered"
+                latency_ms = int((time.monotonic() - started) * 1000)
+            else:
+                logger.warning("[process_message] LLM reply empty after stripping reasoning")
                 reply = ERROR_REPLY
                 outcome = "error"
-                logger.exception("[process_message] LLM request failed: %s", e)
-            _send_telegram(chat_id, reply, reply_to_message_id)
+            logger.info("[process_message] LLM reply length=%s chars", len(reply))
+        except (LLMCreditExhausted, LLMUnavailable) as e:
+            reply = UNAVAILABLE_REPLY
+            outcome = "llm_unavailable"
+            logger.error("[process_message] LLM unavailable: %s", e)
+        except Exception as e:
+            if is_langsmith_exception(e):
+                raise  # run_once switches tracing off
+            reply = ERROR_REPLY
+            outcome = "error"
+            logger.exception("[process_message] LLM request failed: %s", e)
+        _send_telegram(chat_id, reply, reply_to_message_id)
 
     conv.add_message("user", user_input)
     conv.add_message("assistant", reply)
