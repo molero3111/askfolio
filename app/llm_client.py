@@ -84,6 +84,8 @@ def chat(
     }
     if openrouter:
         payload["provider"] = {"data_collection": config.LLM_DATA_COLLECTION}
+        if config.LLM_PROVIDER_ONLY:
+            payload["provider"]["only"] = list(config.LLM_PROVIDER_ONLY)
         headers["X-OpenRouter-Title"] = config.LLM_APP_NAME
         if config.LLM_APP_URL:
             headers["HTTP-Referer"] = config.LLM_APP_URL
@@ -111,11 +113,12 @@ def chat(
             lowered = message.lower()
             if "data policy" in lowered or "no endpoints found" in lowered:
                 logger.error(
-                    "[llm] no provider for %s matches data_collection=%s",
+                    "[llm] no provider for %s matches data_collection=%s only=%s",
                     primary,
                     config.LLM_DATA_COLLECTION,
+                    ",".join(config.LLM_PROVIDER_ONLY) or "any",
                 )
-                raise LLMUnavailable("no provider matches the data policy")
+                raise LLMUnavailable("no provider matches the provider policy")
             raise LLMUnavailable(f"LLM request rejected (HTTP {status})")
         if status == 429 or status >= 500:
             if attempt == 0:
