@@ -12,7 +12,7 @@ telegram_offset.txt
 # Personal data
 resources/json/*.json
 resources/pdfs/
-evals/golden*.yaml
+evals/*.y*ml
 !evals/golden.example.yaml
 evals/results/
 e2e_timing.py

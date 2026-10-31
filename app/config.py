@@ -56,6 +56,7 @@ LLM_MODEL = _env("LLM_MODEL", "")
 # Comma-separated OpenRouter model IDs tried in order if the primary fails
 LLM_FALLBACK_MODELS = [m.strip() for m in _env("LLM_FALLBACK_MODELS", "").split(",") if m.strip()]
 LLM_API_KEY = _env("LLM_API_KEY", "")
+POSTGRES_PASSWORD = _env("POSTGRES_PASSWORD")
 # Timeout in seconds for the HTTP request to the LLM API
 LLM_REQUEST_TIMEOUT = int(_env("LLM_REQUEST_TIMEOUT", "60"))
 LLM_MAX_TOKENS = int(_env("LLM_MAX_TOKENS", "800"))

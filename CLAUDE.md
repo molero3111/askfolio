@@ -39,7 +39,7 @@ uv run python scripts/authorize_calendar.py
 main.py
   └─ build_graph() → LangGraph StateGraph loop (poll → process → repeat)
 
-app/graph.py          — StateGraph nodes and routing logic
+app/graph.py          — StateGraph nodes and routing logic; answer_question() is the Telegram-free Q&A path
   ├─ get_telegram_updates_node  — calls Telegram getUpdates, returns pending messages
   └─ process_message_node       — routes each message to scheduling SM or LLM Q&A
 
@@ -69,6 +69,7 @@ ingest/
 scripts/
   ├─ check_index_pii.py    — fails if the owner's email/phone is still in the vector table
   ├─ privacy_scan.py       — CI: fails if a tracked file contains a PRIVACY_DENYLIST term
+  ├─ run_eval.py           — answer check: golden YAML cases through answer_question(), per model (not CI)
   └─ check_image.sh        — CI: asserts the built image has no secrets and runs non-root
 
 deploy/compose.yml         — production stack: GHCR image, ASKFOLIO_* host paths, read-only hardened app
