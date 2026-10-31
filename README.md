@@ -217,6 +217,8 @@ uv run python scripts/run_eval.py --golden path/to/golden.yaml --model a/b --mod
 uv run python scripts/run_eval.py --golden path/to/golden.yaml --case years-experience  # one case
 ```
 
+A case with `language: en` or `language: es` also fails when the reply is in the other language. The runner refuses to start when the knowledge JSON lacks an email or a phone (pass `--allow-missing-contact` to run without that check).
+
 Each case is `PASS`, `FAIL`, `ERROR` (the LLM call failed) or `MISROUTED` (the bot would send this message to the scheduling flow instead; this follows `BOOKING_ENABLED`, and `--booking` checks routing as if it were on). The summary per model counts passed cases, `contact` and `injection` cases, mean latency and cost when the provider reports it. Results are saved to `evals/results/<timestamp>.json`. Exit code: 0 when every case passed, 1 otherwise, 2 for a bad golden file or arguments.
 
 ## Rate limits

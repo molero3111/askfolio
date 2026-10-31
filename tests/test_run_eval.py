@@ -58,7 +58,7 @@ def test_load_golden_reads_cases(tmp_path):
     )
     cases = load_golden(path)
     assert [c.id for c in cases] == ["stack", "es"]
-    assert cases[0].language == "en"
+    assert cases[0].language is None
     assert cases[0].history == []
     assert cases[0].must_not_include == []
     assert cases[1].must_include == [["ingeniería", "engineering"]]
@@ -398,14 +398,30 @@ def test_main_rejects_contact_values_in_history(tmp_path, monkeypatch):
     assert main([*_main_args(golden, cv, tmp_path / "results"), "--model", "m"]) == 2
 
 
-@pytest.mark.parametrize("cv_data,expected", [(CV, "contact check: email on, phone on"),
-                                              ({}, "contact check: email off, phone off")])
-def test_main_reports_contact_guard_state(run_files, monkeypatch, capsys, cv_data, expected):
+@pytest.mark.parametrize(
+    "cv_data,extra,expected",
+    [
+        (CV, [], "contact check: email on, phone on"),
+        ({}, ["--allow-missing-contact"], "contact check: email off, phone off"),
+    ],
+)
+def test_main_reports_contact_guard_state(run_files, monkeypatch, capsys, cv_data, extra, expected):
     golden, cv, out = run_files
     cv.write_text(json.dumps(cv_data))
     monkeypatch.setattr(run_eval, "run_case", lambda case, model, guard: _result(model, "PASS"))
-    main([*_main_args(golden, cv, out), "--model", "m"])
+    main([*_main_args(golden, cv, out), "--model", "m", *extra])
     assert expected in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "cv_data",
+    [{}, {"personal_info": {"email": EMAIL}}, {"personal_info": {"phone": PHONE}}],
+)
+def test_main_fails_closed_without_contact_values(run_files, monkeypatch, cv_data):
+    golden, cv, out = run_files
+    cv.write_text(json.dumps(cv_data))
+    monkeypatch.setattr(run_eval, "run_case", lambda *a: pytest.fail("ran a case"))
+    assert main([*_main_args(golden, cv, out), "--model", "m"]) == 2
 
 
 def test_main_booking_flag_sets_the_prompt_hint(run_files, monkeypatch):
@@ -415,3 +431,48 @@ def test_main_booking_flag_sets_the_prompt_hint(run_files, monkeypatch):
     monkeypatch.setattr(run_eval, "run_case", lambda case, model, guard: _result(model, "PASS"))
     main([*_main_args(golden, cv, out), "--model", "m", "--booking"])
     assert llm_messages.BOOKING_ENABLED is True
+
+
+def test_short_phone_is_still_checked():
+    guard = ContactGuard.from_cv({"personal_info": {"email": EMAIL, "phone": "555 0100"}})
+    assert guard.phone_digits == "5550100"
+    assert guard.leaks("call 555-0100") == ["owner phone"]
+    assert "0100" not in guard.redact("call 555-0100")
+
+
+@pytest.mark.parametrize(
+    "language,reply,ok",
+    [
+        ("es", "Trabaja en Acme Corp desde 2025 y usa Laravel.", True),
+        ("es", "He works at Acme Corp and uses Laravel.", False),
+        ("en", "He works at Acme Corp and uses Laravel.", True),
+        ("en", "Trabaja en Acme Corp y usa Laravel.", False),
+        (None, "Trabaja en Acme Corp.", True),
+        ("fr", "He works at Acme Corp.", True),  # no stopword list: not checked
+    ],
+)
+def test_grade_checks_reply_language(guard, language, reply, ok):
+    result = grade(_case(must_include=["Acme Corp"], language=language), reply, guard)
+    assert result.passed is ok
+    if not ok:
+        assert result.missing == [f"(reply not in {language})"]
+
+
+def test_error_text_hides_secrets(guard, monkeypatch):
+    monkeypatch.setattr(config, "LLM_API_KEY", "sk-or-secret-value-123")
+
+    def down(messages, *, model=None):
+        raise RuntimeError("auth failed for sk-or-secret-value-123")
+
+    result = run_case(_case(), "m", guard, answer=_fake_answer, chat_fn=down)
+    assert result.status == "ERROR"
+    assert "sk-or-secret-value-123" not in result.error
+
+
+def test_routing_error_is_an_error_row(guard, monkeypatch):
+    def broken(*_a):
+        raise RuntimeError("routing bug")
+
+    monkeypatch.setattr(graph, "_routes_to_scheduling", broken)
+    result = run_case(_case(), "m", guard, answer=_fake_answer, chat_fn=_chat_returning("x"))
+    assert result.status == "ERROR"

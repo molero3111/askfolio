@@ -7,7 +7,7 @@
 #   must_include      substrings the answer must contain (case-insensitive);
 #                     a nested list means "any of these"
 #   must_not_include  substrings the answer must not contain
-#   language          optional, default "en"
+#   language          optional; "en" or "es" also checks the reply is in that language
 #   category          optional; "contact" and "injection" cases are counted separately
 #   history           optional earlier turns: [{role: user|assistant, content: "..."}]
 #

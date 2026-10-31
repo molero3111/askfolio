@@ -25,11 +25,17 @@ sys.path.insert(0, str(ROOT))
 from app import config, graph, llm_messages
 from app.conversation import ConversationState
 from app.llm_client import LLMResult, chat
+from app.log_redact import RedactionFilter
 from ingest.scrub import contact_values, normalize, owner_email_pattern, scrub_text
 
 _ROLES = {"user", "assistant"}
 _PHONE_TAIL = 9  # digits compared, so a missing country code still counts as a leak
 WITHHELD = "[reply withheld: contact leak]"
+# Function words that tell the reply's language apart; only these languages are checked.
+_STOPWORDS = {
+    "en": frozenset(["the", "and", "of", "is", "he", "his", "has", "with", "at", "to", "for", "in", "was", "who", "from"]),
+    "es": frozenset(["el", "la", "los", "las", "de", "del", "que", "y", "es", "en", "su", "sus", "con", "por", "para", "una", "un", "como"]),
+}
 
 
 class GoldenError(ValueError):
@@ -42,7 +48,7 @@ class Case:
     question: str
     must_include: list[str | list[str]]
     must_not_include: list[str]
-    language: str = "en"
+    language: str | None = None
     category: str = ""
     history: list[dict] = field(default_factory=list)
 
@@ -93,7 +99,7 @@ def _parse_case(raw, index: int, seen: set[str]) -> Case:
         question=raw["question"],
         must_include=must_include,
         must_not_include=must_not_include,
-        language=raw.get("language", "en"),
+        language=raw.get("language"),
         category=raw.get("category", ""),
         history=[{"role": m["role"], "content": m["content"]} for m in history],
     )
@@ -133,8 +139,7 @@ class ContactGuard:
             if "@" in value:
                 email = value.strip()
             else:
-                digits = re.sub(r"\D", "", value)
-                phone = digits if len(digits) >= _PHONE_TAIL else None
+                phone = re.sub(r"\D", "", value) or None
         return cls(email=email, phone_digits=phone)
 
     def leaks(self, reply: str) -> list[str]:
@@ -144,6 +149,7 @@ class ContactGuard:
         pattern = owner_email_pattern(self.email) if self.email else None
         if pattern is not None and pattern.search(text):
             found.append("owner email")
+        # last 9 digits, so a dropped country code still counts; a shorter phone in full
         if self.phone_digits and self.phone_digits[-_PHONE_TAIL:] in re.sub(r"\D", "", text):
             found.append("owner phone")
         return found
@@ -162,6 +168,13 @@ class Grade:
     forbidden: list[str]
 
 
+def _in_language(reply: str, language: str) -> bool:
+    words = re.findall(r"\w+", _fold(reply))
+    own = sum(w in _STOPWORDS[language] for w in words)
+    other = max(sum(w in sw for w in words) for lang, sw in _STOPWORDS.items() if lang != language)
+    return own > other
+
+
 def grade(case: Case, reply: str, guard: ContactGuard) -> Grade:
     if not reply.strip():
         return Grade(passed=False, missing=["(empty reply)"], forbidden=guard.leaks(reply))
@@ -171,6 +184,8 @@ def grade(case: Case, reply: str, guard: ContactGuard) -> Grade:
         options = item if isinstance(item, list) else [item]
         if not any(_fold(option) in text for option in options):
             missing.append(" | ".join(options))
+    if case.language in _STOPWORDS and not _in_language(reply, case.language):
+        missing.append(f"(reply not in {case.language})")
     forbidden = [s for s in case.must_not_include if _fold(s) in text]
     forbidden += guard.leaks(reply)
     return Grade(passed=not missing and not forbidden, missing=missing, forbidden=forbidden)
@@ -197,6 +212,17 @@ class CaseResult:
     cost: float | None
 
 
+def _hide_secrets(text: str) -> str:
+    """Keep the API key, DB password and DSNs out of printed or saved error text."""
+    secrets = [
+        config.LLM_API_KEY,
+        config.DB_CONNECTION_URL,
+        config.DB_CONNECTION_URL_ASYNC,
+        config._env("POSTGRES_PASSWORD"),
+    ]
+    return RedactionFilter([s for s in secrets if s]).redact(text)
+
+
 def run_case(
     case: Case,
     model: str,
@@ -211,10 +237,6 @@ def run_case(
         status="ERROR", missing=[], forbidden=[], reply="", error=None, latency_s=None,
         prompt_tokens=None, completion_tokens=None, cost=None,
     )
-    if graph._routes_to_scheduling(ConversationState(), case.question):
-        result.status = "MISROUTED"
-        return result
-
     usage: list[LLMResult] = []
 
     def call_llm(messages: list[dict]) -> str:
@@ -225,9 +247,12 @@ def run_case(
     answer = answer or graph.answer_question
     started = time.monotonic()
     try:
+        if graph._routes_to_scheduling(ConversationState(), case.question):
+            result.status = "MISROUTED"
+            return result
         reply = answer(case.question, case.history, call_llm=call_llm)
     except Exception as exc:
-        result.error = guard.redact(f"{type(exc).__name__}: {exc}")
+        result.error = guard.redact(_hide_secrets(f"{type(exc).__name__}: {exc}"))
         return result
     finally:
         result.latency_s = round(time.monotonic() - started, 3)
@@ -298,6 +323,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--cv", type=Path, default=None, help="knowledge JSON with the owner's contact values")
     parser.add_argument("--out", type=Path, default=ROOT / "evals" / "results", help="results directory")
     parser.add_argument(
+        "--allow-missing-contact", action="store_true",
+        help="run even if the knowledge JSON has no email or phone (contact checks then off)",
+    )
+    parser.add_argument(
         "--booking", action="store_true",
         help="check routing as if BOOKING_ENABLED were true (flags MISROUTED cases)",
     )
@@ -330,6 +359,13 @@ def main(argv: list[str] | None = None) -> int:
         print("error: the knowledge JSON must be an object", file=sys.stderr)
         return 2
     guard = ContactGuard.from_cv(cv)
+    if not (guard.email and guard.phone_digits) and not args.allow_missing_contact:
+        print(
+            "error: the knowledge JSON needs both an email and a phone for the contact check "
+            "(or pass --allow-missing-contact)",
+            file=sys.stderr,
+        )
+        return 2
     print(
         f"contact check: email {'on' if guard.email else 'off'}, "
         f"phone {'on' if guard.phone_digits else 'off'}"
