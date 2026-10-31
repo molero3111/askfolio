@@ -5,16 +5,26 @@ email and phone (read from the knowledge JSON at runtime) are always forbidden, 
 never printed or saved: replies are redacted before output.
 """
 
+import argparse
+import json
+import logging
 import re
 import sys
-from dataclasses import dataclass, field
+import time
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from app import config, graph
+from app.conversation import ConversationState
+from app.llm_client import LLMResult, chat
 from ingest.scrub import contact_values, normalize, owner_email_pattern, scrub_text
 
 _ROLES = {"user", "assistant"}
@@ -161,3 +171,197 @@ def grade(case: Case, reply: str, guard: ContactGuard) -> Grade:
     forbidden = [s for s in case.must_not_include if _fold(s) in text]
     forbidden += guard.leaks(reply)
     return Grade(passed=not missing and not forbidden, missing=missing, forbidden=forbidden)
+
+
+CRITICAL_CATEGORIES = frozenset({"contact", "injection"})
+Status = Literal["PASS", "FAIL", "MISROUTED", "ERROR"]
+
+
+@dataclass
+class CaseResult:
+    case_id: str
+    category: str
+    model: str
+    served_model: str | None
+    status: Status
+    missing: list[str]
+    forbidden: list[str]
+    reply: str
+    error: str | None
+    latency_s: float | None
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    cost: float | None
+
+
+def run_case(
+    case: Case,
+    model: str,
+    guard: ContactGuard,
+    *,
+    answer: Callable[..., str] | None = None,
+    chat_fn: Callable[..., LLMResult] = chat,
+) -> CaseResult:
+    """Ask one case through the bot's Q&A path with `model`; never raises."""
+    result = CaseResult(
+        case_id=case.id, category=case.category, model=model, served_model=None,
+        status="ERROR", missing=[], forbidden=[], reply="", error=None, latency_s=None,
+        prompt_tokens=None, completion_tokens=None, cost=None,
+    )
+    if graph._routes_to_scheduling(ConversationState(), case.question):
+        result.status = "MISROUTED"
+        return result
+
+    usage: list[LLMResult] = []
+
+    def call_llm(messages: list[dict]) -> str:
+        llm_result = chat_fn(messages, model=model)
+        usage.append(llm_result)
+        return llm_result.content
+
+    answer = answer or graph.answer_question
+    started = time.monotonic()
+    try:
+        reply = answer(case.question, case.history, call_llm=call_llm)
+    except Exception as exc:
+        result.error = guard.redact(f"{type(exc).__name__}: {exc}")
+        return result
+    finally:
+        result.latency_s = round(time.monotonic() - started, 3)
+        if usage:
+            last = usage[-1]
+            result.served_model = last.model
+            result.prompt_tokens = last.prompt_tokens
+            result.completion_tokens = last.completion_tokens
+            result.cost = last.cost
+
+    graded = grade(case, reply, guard)
+    result.status = "PASS" if graded.passed else "FAIL"
+    result.missing = graded.missing
+    result.forbidden = graded.forbidden
+    result.reply = guard.redact(reply)
+    return result
+
+
+def summarize(results: list[CaseResult]) -> dict[str, dict]:
+    summary: dict[str, dict] = {}
+    for model in dict.fromkeys(r.model for r in results):
+        rows = [r for r in results if r.model == model]
+        critical = [r for r in rows if r.category in CRITICAL_CATEGORIES]
+        latencies = [r.latency_s for r in rows if r.latency_s is not None]
+        costs = [r.cost for r in rows if r.cost is not None]
+        summary[model] = {
+            "passed": sum(r.status == "PASS" for r in rows),
+            "total": len(rows),
+            "critical_passed": sum(r.status == "PASS" for r in critical),
+            "critical_total": len(critical),
+            "mean_latency_s": round(sum(latencies) / len(latencies), 3) if latencies else None,
+            "cost": round(sum(costs), 6) if costs else None,
+        }
+    return summary
+
+
+def _row(r: CaseResult) -> str:
+    latency = f"{r.latency_s:.1f}s" if r.latency_s is not None else "-"
+    served = f" (served by {r.served_model})" if r.served_model and r.served_model != r.model else ""
+    details = []
+    if r.missing:
+        details.append("missing: " + "; ".join(r.missing))
+    if r.forbidden:
+        details.append("forbidden: " + "; ".join(r.forbidden))
+    if r.error:
+        details.append(r.error)
+    return f"{r.status:<9} {r.model}{served}  {r.case_id}  {latency}  {'  '.join(details)}".rstrip()
+
+
+def _summary_line(model: str, s: dict) -> str:
+    latency = f"{s['mean_latency_s']:.1f}s" if s["mean_latency_s"] is not None else "-"
+    cost = f"${s['cost']:.4f}" if s["cost"] is not None else "n/a"
+    return (
+        f"{model}: {s['passed']}/{s['total']} passed, "
+        f"critical {s['critical_passed']}/{s['critical_total']}, "
+        f"mean latency {latency}, cost {cost}"
+    )
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--golden", required=True, type=Path, help="golden YAML file")
+    parser.add_argument(
+        "--model", action="append", default=[],
+        help="model to evaluate (repeatable); fallbacks are off when given",
+    )
+    parser.add_argument("--case", action="append", default=[], help="only run this case id (repeatable)")
+    parser.add_argument("--cv", type=Path, default=None, help="knowledge JSON with the owner's contact values")
+    parser.add_argument("--out", type=Path, default=ROOT / "evals" / "results", help="results directory")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+
+    try:
+        cases = load_golden(args.golden)
+    except GoldenError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.case:
+        unknown = sorted(set(args.case) - {c.id for c in cases})
+        if unknown:
+            print(f"error: unknown case id(s): {', '.join(unknown)}", file=sys.stderr)
+            return 2
+        cases = [c for c in cases if c.id in args.case]
+
+    cv_path = args.cv or config.resolve_path(config.INGEST_KNOWLEDGE_JSON)
+    try:
+        cv = json.loads(Path(cv_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        print(f"error: cannot read the knowledge JSON: {type(exc).__name__}", file=sys.stderr)
+        return 2
+    if not isinstance(cv, dict):
+        print("error: the knowledge JSON must be an object", file=sys.stderr)
+        return 2
+    guard = ContactGuard.from_cv(cv)
+
+    if args.model:
+        models = list(dict.fromkeys(args.model))
+        config.LLM_FALLBACK_MODELS = []  # measure each model alone
+    else:
+        models = [config.LLM_MODEL]
+
+    started_at = datetime.now(UTC)
+    results = []
+    for model in models:
+        for case in cases:
+            result = run_case(case, model, guard)
+            print(_row(result), flush=True)
+            results.append(result)
+
+    summary = summarize(results)
+    print()
+    for model, s in summary.items():
+        print(_summary_line(model, s))
+
+    args.out.mkdir(parents=True, exist_ok=True)
+    out_file = args.out / f"{started_at.strftime('%Y%m%dT%H%M%SZ')}.json"
+    out_file.write_text(
+        json.dumps(
+            {
+                "started_at": started_at.isoformat(),
+                "golden": args.golden.name,
+                "models": models,
+                "results": [asdict(r) for r in results],
+                "summary": summary,
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    print(f"\nresults: {out_file}")
+    return 0 if all(r.status == "PASS" for r in results) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
