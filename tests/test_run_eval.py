@@ -449,6 +449,8 @@ def test_short_phone_is_still_checked():
         ("en", "Trabaja en Acme Corp y usa Laravel.", False),
         (None, "Trabaja en Acme Corp.", True),
         ("fr", "He works at Acme Corp.", True),  # no stopword list: not checked
+        ("es", "Acme Corp: Django, Python, PostgreSQL", True),  # no function words: unknown
+        ("es", "Trabaja en Acme Corp; el repo dice \"a tool for the team\".", True),  # quoted English
     ],
 )
 def test_grade_checks_reply_language(guard, language, reply, ok):
@@ -476,3 +478,13 @@ def test_routing_error_is_an_error_row(guard, monkeypatch):
     monkeypatch.setattr(graph, "_routes_to_scheduling", broken)
     result = run_case(_case(), "m", guard, answer=_fake_answer, chat_fn=_chat_returning("x"))
     assert result.status == "ERROR"
+
+
+def test_error_text_hides_db_password(guard, monkeypatch):
+    monkeypatch.setattr(config, "POSTGRES_PASSWORD", "pg-pass-xyz")
+
+    def down(messages, *, model=None):
+        raise RuntimeError("connection failed: password pg-pass-xyz rejected")
+
+    result = run_case(_case(), "m", guard, answer=_fake_answer, chat_fn=down)
+    assert "pg-pass-xyz" not in result.error

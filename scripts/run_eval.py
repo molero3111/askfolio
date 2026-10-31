@@ -172,7 +172,8 @@ def _in_language(reply: str, language: str) -> bool:
     words = re.findall(r"\w+", _fold(reply))
     own = sum(w in _STOPWORDS[language] for w in words)
     other = max(sum(w in sw for w in words) for lang, sw in _STOPWORDS.items() if lang != language)
-    return own > other
+    # Judge only a clear lean: terse lists and replies quoting the other language pass.
+    return not (other >= 2 and other > 2 * own)
 
 
 def grade(case: Case, reply: str, guard: ContactGuard) -> Grade:
@@ -218,7 +219,7 @@ def _hide_secrets(text: str) -> str:
         config.LLM_API_KEY,
         config.DB_CONNECTION_URL,
         config.DB_CONNECTION_URL_ASYNC,
-        config._env("POSTGRES_PASSWORD"),
+        config.POSTGRES_PASSWORD,
     ]
     return RedactionFilter([s for s in secrets if s]).redact(text)
 
