@@ -160,6 +160,9 @@ class RetryQueue:
             return None
         return min(self._items, key=lambda item: (item.attempts, item.created_at))
 
+    def age_seconds(self, item: QueueItem) -> int:
+        return int(self._clock() - item.created_at)
+
     def mark_failed(self, item: QueueItem) -> None:
         item.attempts += 1
         self._next_attempt_at = self._clock() + self._interval

@@ -206,3 +206,218 @@ def test_queue_contents_are_never_logged(flow, caplog):
 
     assert len(flow.queue) == 1
     assert MARKER not in caplog.text
+
+
+# The worker
+
+
+def _due(flow, text="What does he do?", chat=CHAT, msg=MSG):
+    """Queue a question and move the clock to its first attempt."""
+    flow.queue.add(chat, msg, text)
+    flow.clock.now += 1800
+
+
+@pytest.fixture
+def retries(flow, monkeypatch):
+    log: list[tuple] = []
+    monkeypatch.setattr(
+        graph.analytics,
+        "track_retry",
+        lambda chat_id, outcome, **kw: log.append((chat_id, outcome, kw)),
+    )
+    return log
+
+
+def test_late_answer_replies_to_original_message(flow, retries):
+    _due(flow)
+
+    graph.process_retry_queue({})
+
+    assert flow.sends == [(CHAT, graph.LATE_REPLY_PREFIX + "An answer.", MSG)]
+    assert len(flow.queue) == 0
+    assert retries == [(CHAT, "delivered_late", {"attempts": 0, "waited_s": 1800})]
+
+
+def test_late_delivery_is_not_counted_as_a_new_question(flow, retries):
+    _due(flow)
+
+    graph.process_retry_queue({})
+
+    assert flow.tracks == []
+
+
+def test_nothing_runs_before_due(flow, retries):
+    flow.queue.add(CHAT, MSG, "q")
+    flow.clock.now += 1799
+
+    graph.process_retry_queue({})
+
+    assert flow.llm_calls == 0
+    assert flow.sends == []
+
+
+def test_one_attempt_per_call(flow, retries):
+    flow.queue.add(CHAT, MSG, "first")
+    flow.queue.add(2, 20, "second")
+    flow.clock.now += 1800
+
+    graph.process_retry_queue({})
+    graph.process_retry_queue({})
+
+    assert flow.llm_calls == 1
+    flow.clock.now += 60
+    graph.process_retry_queue({})
+    assert flow.llm_calls == 2
+    assert len(flow.queue) == 0
+
+
+def test_still_down_keeps_item(flow, retries):
+    _due(flow)
+    flow.llm = _raises(LLMTemporary("down"))
+
+    graph.process_retry_queue({})
+
+    assert flow.sends == []
+    assert retries == []
+    assert len(flow.queue) == 1
+    flow.clock.now += 1800
+    assert flow.queue.next_due().attempts == 1
+
+
+def test_empty_reply_keeps_item(flow, retries):
+    _due(flow)
+    flow.llm = lambda _m: "<think>only reasoning</think>"
+
+    graph.process_retry_queue({})
+
+    assert flow.sends == []
+    assert len(flow.queue) == 1
+
+
+def test_late_answer_goes_through_contact_check(flow, retries, monkeypatch):
+    email = "jane.doe@example.com"
+    guard = graph.contact_guard.ContactGuard.from_cv({"personal_info": {"email": email}})
+    monkeypatch.setattr(graph.contact_guard, "get_guard", lambda: guard)
+    flow.llm = lambda _m: f"Write to {email}"
+    _due(flow)
+    conversations: dict = {}
+
+    graph.process_retry_queue(conversations)
+
+    assert flow.sends == [(CHAT, graph.LATE_REPLY_PREFIX + graph.CONTACT_WITHHELD_REPLY, MSG)]
+    assert email not in str(conversations)
+
+
+def test_history_holds_answer_without_prefix(flow, retries):
+    _due(flow, "My question")
+    conversations: dict = {}
+
+    graph.process_retry_queue(conversations)
+
+    assert [m["content"] for m in _history(conversations)] == ["My question", "An answer."]
+
+
+def test_retry_uses_the_history_the_chat_has_now(flow, retries):
+    conversations = _ask("Earlier question")
+    seen = []
+    flow.llm = lambda messages: seen.append(str(messages)) or "An answer."
+    _due(flow, "Later question")
+
+    graph.process_retry_queue(conversations)
+
+    assert "Earlier question" in seen[0]
+    assert [m["content"] for m in _history(conversations)][-2:] == ["Later question", "An answer."]
+
+
+def test_expired_item_gets_apology_once(flow, retries):
+    flow.queue.add(CHAT, MSG, "q")
+    flow.clock.now += 86400
+
+    graph.process_retry_queue({})
+    graph.process_retry_queue({})
+
+    assert flow.sends == [(CHAT, graph.EXPIRED_REPLY, MSG)]
+    assert flow.llm_calls == 0
+    assert retries == [(CHAT, "expired", {"attempts": 0, "waited_s": 86400})]
+    assert not flow.path.exists()
+
+
+def test_restart_resumes(flow, retries):
+    _due(flow, "My question")
+    flow.queue = flow.new_queue()
+
+    conversations: dict = {}
+    graph.process_retry_queue(conversations)
+
+    assert flow.sends == [(CHAT, graph.LATE_REPLY_PREFIX + "An answer.", MSG)]
+    assert len(flow.queue) == 0
+    assert not flow.path.exists()
+    assert len(_history(conversations)) == 2
+
+
+def test_blocked_chat_is_dropped(flow, retries):
+    _due(flow)
+    flow.send_status = "gone"
+    conversations: dict = {}
+
+    graph.process_retry_queue(conversations)
+
+    assert len(flow.queue) == 0
+    assert retries == [(CHAT, "undeliverable", {"attempts": 0, "waited_s": 1800})]
+    assert _history(conversations) == []
+
+
+def test_late_send_failure_retries(flow, retries):
+    _due(flow)
+    flow.send_status = "retry"
+    conversations: dict = {}
+
+    graph.process_retry_queue(conversations)
+
+    assert len(flow.queue) == 1
+    assert retries == []
+    assert _history(conversations) == []
+
+
+def test_attempt_touches_heartbeat_first(flow, retries, monkeypatch):
+    order = []
+    monkeypatch.setattr(graph.heartbeat, "touch", lambda: order.append("touch"))
+    flow.llm = lambda _m: order.append("llm") or "An answer."
+    _due(flow)
+
+    graph.process_retry_queue({})
+
+    assert order == ["touch", "llm"]
+
+
+def test_worker_never_raises_and_logs_no_text(flow, retries, monkeypatch, caplog):
+    def boom():
+        raise RuntimeError(MARKER)
+
+    monkeypatch.setattr(retry_queue, "get_queue", boom)
+    with caplog.at_level(logging.INFO):
+        graph.process_retry_queue({})
+    assert "RuntimeError" in caplog.text
+    assert MARKER not in caplog.text
+
+
+def test_failed_attempt_logs_no_text(flow, retries, caplog):
+    _due(flow, MARKER)
+    flow.llm = _raises(RuntimeError(MARKER))
+
+    with caplog.at_level(logging.INFO):
+        graph.process_retry_queue({})
+
+    assert "RuntimeError" in caplog.text
+    assert MARKER not in caplog.text
+
+
+def test_worker_lets_shutdown_through(flow, retries):
+    _due(flow)
+    flow.llm = _raises(SystemExit(0))
+
+    with pytest.raises(SystemExit):
+        graph.process_retry_queue({})
+
+    assert len(flow.queue) == 1
+    assert flow.path.exists()

@@ -371,3 +371,54 @@ def test_send_telegram_reports_sent(monkeypatch):
 def test_send_telegram_reports_failures_without_raising(monkeypatch, exc, status):
     _send_raising(monkeypatch, exc)
     assert graph._send_telegram(1, "hi", 2) == status
+
+
+def test_run_once_runs_retries_after_success(monkeypatch, tmp_path):
+    monkeypatch.setenv("HEARTBEAT_FILE", str(tmp_path / "hb"))
+    monkeypatch.setattr(main, "save_offset", lambda o: None)
+    calls = []
+
+    def retries(conversations):
+        calls.append(conversations)
+        assert not (tmp_path / "hb").exists() or (tmp_path / "hb").unlink() is None
+
+    monkeypatch.setattr(main, "process_retry_queue", retries)
+    conversations = {"1": {}}
+    main.run_once(_OkGraph(), {"offset": 1, "conversations": conversations}, sleep=lambda s: None)
+
+    assert calls == [conversations]
+    # Touched again after the retry, which can take as long as a slow LLM call
+    assert (tmp_path / "hb").exists()
+
+
+def test_run_once_gives_retries_a_conversations_dict(monkeypatch):
+    monkeypatch.setattr(main, "save_offset", lambda o: None)
+    calls = []
+    monkeypatch.setattr(main, "process_retry_queue", calls.append)
+
+    out = main.run_once(_OkGraph(), {"offset": 1}, sleep=lambda s: None)
+
+    assert calls == [{}]
+    assert calls[0] is out["conversations"]
+
+
+def test_run_once_skips_retries_after_failure(monkeypatch):
+    calls = []
+    monkeypatch.setattr(main, "process_retry_queue", calls.append)
+
+    main.run_once(_BoomGraph(), {"offset": 1, "conversations": {}}, sleep=lambda s: None)
+
+    assert calls == []
+
+
+def test_startup_loads_the_retry_queue(monkeypatch, tmp_path):
+    monkeypatch.setenv("HEARTBEAT_FILE", str(tmp_path / "hb"))
+    monkeypatch.setattr(main, "TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setattr(main, "LLM_MODEL", "some/model")
+    monkeypatch.setattr(main, "get_vectorstore", lambda: None)
+    loaded = []
+    monkeypatch.setattr(main, "get_queue", lambda: loaded.append(1))
+
+    main.startup()
+
+    assert loaded == [1]

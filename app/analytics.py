@@ -112,6 +112,13 @@ def track_question(
     _capture("question_asked", chat_id, properties)
 
 
+def track_retry(chat_id: int | str, outcome: str, *, attempts: int, waited_s: int) -> None:
+    """What happened to a queued question. Its text was already sent with question_asked."""
+    if not enabled():
+        return
+    _capture("question_retry_result", chat_id, {"outcome": outcome, "attempts": attempts, "waited_s": waited_s})
+
+
 def _load_seen() -> set[str]:
     try:
         text = config.resolve_path(config.SEEN_CHATS_FILE).read_text(encoding="utf-8")

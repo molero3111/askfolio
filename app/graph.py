@@ -623,6 +623,60 @@ def _process_first(pending: list, conversations: dict) -> dict:
     return {"pending_messages": pending[1:], "conversations": conversations}
 
 
+def _attempt_retry(queue: retry_queue.RetryQueue, item: retry_queue.QueueItem, conversations: dict) -> None:
+    """One try at a queued question: deliver the late answer or leave it for the next attempt."""
+    key = str(item.chat_id)
+    conv = ConversationState.from_dict(conversations.get(key, {}))
+    heartbeat.touch()
+    try:
+        reply = answer_question(item.question, conv.history)
+        reply = _withhold_contact_leak(reply) if reply else ""
+    except Exception as exc:
+        # Type only: the message could carry the question
+        logger.warning("[retry_queue] attempt failed (%s); attempts so far=%s", type(exc).__name__, item.attempts)
+        queue.mark_failed(item)
+        return
+    if not reply:
+        logger.warning("[retry_queue] attempt gave an empty reply; attempts so far=%s", item.attempts)
+        queue.mark_failed(item)
+        return
+
+    status = _send_telegram(item.chat_id, LATE_REPLY_PREFIX + reply, item.message_id)
+    if status == "retry":
+        queue.mark_failed(item)
+        return
+    waited_s = queue.age_seconds(item)
+    queue.mark_done(item)
+    if status == "gone":
+        _track(analytics.track_retry, item.chat_id, "undeliverable", attempts=item.attempts, waited_s=waited_s)
+        return
+    conv.add_message("user", item.question)
+    conv.add_message("assistant", reply)
+    conversations[key] = conv.to_dict()
+    logger.info("[retry_queue] late answer delivered (chat_id=%s, waited_s=%s)", item.chat_id, waited_s)
+    _track(analytics.track_retry, item.chat_id, "delivered_late", attempts=item.attempts, waited_s=waited_s)
+
+
+def process_retry_queue(conversations: dict) -> None:
+    """Expire old questions, then make at most one attempt. Never raises Exception."""
+    try:
+        queue = retry_queue.get_queue()
+        for item in queue.pop_expired():
+            _send_telegram(item.chat_id, EXPIRED_REPLY, item.message_id)
+            _track(
+                analytics.track_retry,
+                item.chat_id,
+                "expired",
+                attempts=item.attempts,
+                waited_s=queue.age_seconds(item),
+            )
+        item = queue.next_due()
+        if item is not None:
+            _attempt_retry(queue, item, conversations)
+    except Exception as exc:
+        logger.warning("[retry_queue] cycle failed (%s)", type(exc).__name__)
+
+
 def should_continue(state: AgentState) -> str:
     return "process_message" if state.get("pending_messages") else "end"
 

@@ -19,11 +19,12 @@ from app.config import (
     TELEGRAM_BOT_TOKEN,
 )
 from app.contact_guard import get_guard
-from app.graph import build_graph
+from app.graph import build_graph, process_retry_queue
 from app.log_redact import install_excepthook, install_redaction
 from app.observability import is_langsmith_exception
 from app.offset import load_offset, save_offset
 from app.rag import get_vectorstore
+from app.retry_queue import get_queue
 
 if LANGSMITH_ENABLED:
     # Disable global auto-tracing (LangGraph node-level noise on empty polls).
@@ -69,6 +70,7 @@ def startup() -> None:
         raise SystemExit("Set LLM_MODEL in .env (e.g. an OpenRouter model ID)")
     get_vectorstore()
     get_guard()  # reports a missing or empty knowledge JSON at startup, not on the first question
+    get_queue()  # reports an unusable queue file and any resumed questions at startup
     heartbeat.touch()
 
 
@@ -105,6 +107,8 @@ def run_once(graph, state: dict, sleep=time.sleep) -> dict:
     if new_state.get("offset") is not None:
         save_offset(new_state["offset"])
     heartbeat.touch()
+    process_retry_queue(new_state.setdefault("conversations", {}))
+    heartbeat.touch()  # a retry can take as long as a slow LLM call
     return new_state
 
 
