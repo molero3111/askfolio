@@ -340,3 +340,33 @@ def test_leftover_temp_files_are_removed_at_load(path, clock):
 
     assert not leftover.exists()
     assert other.exists()
+
+
+def test_expired_item_is_no_duplicate_of_a_new_question(path, clock):
+    q = _queue(path, clock)
+    q.add(1, 10, "hello")
+    clock.now += 86400
+
+    assert q.add(1, 11, "hello") is AddResult.ADDED
+    assert len(q) == 2
+
+
+def test_expired_items_do_not_use_up_the_caps(path, clock):
+    q = _queue(path, clock, max_per_chat=1, max_items=1)
+    q.add(1, 10, "old")
+    clock.now += 86400
+
+    assert q.add(1, 11, "new") is AddResult.ADDED
+
+
+def test_add_with_only_expired_items_waits_one_interval(path, clock):
+    q = _queue(path, clock)
+    q.add(1, 10, "old")
+    clock.now += 86400
+
+    q.add(1, 11, "new")
+
+    clock.now += 1799
+    assert q.next_due() is None
+    clock.now += 1
+    assert q.next_due().question == "new"

@@ -163,14 +163,16 @@ class RetryQueue:
 
     def add(self, chat_id: int, message_id: int, question: str) -> AddResult:
         """Keep a question. Only ADDED and DUPLICATE mean it will be retried."""
-        same_chat = [item for item in self._items if item.chat_id == chat_id]
+        # Expired items only wait for their apology, so they don't count here
+        live = self._live_items()
+        same_chat = [item for item in live if item.chat_id == chat_id]
         if any(_same_question(item.question, question) for item in same_chat):
             return AddResult.DUPLICATE
-        if len(self._items) >= self._max_items or len(same_chat) >= self._max_per_chat:
+        if len(live) >= self._max_items or len(same_chat) >= self._max_per_chat:
             return AddResult.FULL
         now = self._clock()
         previous_next = self._next_attempt_at
-        if not self._items:
+        if not live:
             self._next_attempt_at = now + self._interval
         self._items.append(QueueItem(uuid.uuid4().hex, chat_id, message_id, question, now))
         if self._save():
@@ -193,6 +195,10 @@ class RetryQueue:
             self._next_attempt_at = 0.0
         self._save()
 
+    def _live_items(self) -> list[QueueItem]:
+        cutoff = self._clock() - self._max_age
+        return [item for item in self._items if item.created_at > cutoff]
+
     def expired(self) -> list[QueueItem]:
         """The items that reached the maximum age; they stay queued until removed."""
         cutoff = self._clock() - self._max_age
@@ -207,11 +213,9 @@ class RetryQueue:
 
     def next_due(self) -> QueueItem | None:
         """The item to try now: fewest attempts, then oldest, so one bad question can't block the rest."""
-        now = self._clock()
-        if now < self._next_attempt_at:
+        if self._clock() < self._next_attempt_at:
             return None
-        live = [item for item in self._items if item.created_at > now - self._max_age]
-        return min(live, key=lambda item: (item.attempts, item.created_at), default=None)
+        return min(self._live_items(), key=lambda item: (item.attempts, item.created_at), default=None)
 
     def age_seconds(self, item: QueueItem) -> int:
         return int(self._clock() - item.created_at)

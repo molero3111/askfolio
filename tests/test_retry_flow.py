@@ -386,10 +386,32 @@ def test_apology_gives_up_after_the_grace_period(flow, retries, caplog):
     with caplog.at_level(logging.WARNING):
         graph.process_retry_queue({})
 
-    assert len(flow.sends) == 1
+    assert len(flow.sends) == 2
     assert len(flow.queue) == 0
     assert retries[0][1] == "expired"
     assert "apology not sent" in caplog.text
+
+
+def test_bot_back_long_after_expiry_still_apologises(flow, retries):
+    flow.queue.add(CHAT, MSG, "q")
+    flow.clock.now += 86400 + graph.EXPIRED_APOLOGY_GRACE_SECONDS + 3600
+
+    graph.process_retry_queue({})
+
+    assert flow.sends == [(CHAT, graph.EXPIRED_REPLY, MSG)]
+    assert len(flow.queue) == 0
+
+
+def test_failed_apology_skips_the_llm_attempt_that_cycle(flow, retries):
+    flow.queue.add(CHAT, MSG, "old")
+    flow.clock.now += 86000
+    flow.queue.add(2, 20, "young")
+    flow.clock.now += 2000
+    flow.send_status = "retry"
+
+    graph.process_retry_queue({})
+
+    assert flow.llm_calls == 0
 
 
 def test_blocked_chat_expiry_is_removed(flow, retries):
@@ -584,3 +606,26 @@ def test_other_failure_in_a_retry_leaves_tracing_on(flow, retries, monkeypatch):
     graph.process_retry_queue({})
 
     assert graph.os.environ[graph.LANGSMITH_RUNTIME_FLAG] == "true"
+
+
+def test_llm_failure_in_a_retry_never_turns_tracing_off(flow, retries, monkeypatch):
+    monkeypatch.setenv(graph.LANGSMITH_RUNTIME_FLAG, "true")
+    monkeypatch.setattr(graph, "is_langsmith_exception", lambda exc: True)
+    flow.llm = _raises(LLMTemporary("LLM unavailable (HTTP 429)"))
+    _due(flow)
+
+    graph.process_retry_queue({})
+
+    assert graph.os.environ[graph.LANGSMITH_RUNTIME_FLAG] == "true"
+
+
+def test_turning_tracing_off_in_a_retry_is_logged(flow, retries, monkeypatch, caplog):
+    monkeypatch.setenv(graph.LANGSMITH_RUNTIME_FLAG, "true")
+    monkeypatch.setattr(graph, "is_langsmith_exception", lambda exc: True)
+    flow.llm = _raises(RuntimeError("tracing backend down"))
+    _due(flow)
+
+    with caplog.at_level(logging.WARNING):
+        graph.process_retry_queue({})
+
+    assert "disabling tracing" in caplog.text

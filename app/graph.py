@@ -644,8 +644,10 @@ def _attempt_retry(queue: retry_queue.RetryQueue, item: retry_queue.QueueItem, c
     except Exception as exc:
         # Type only: the message could carry the question
         logger.warning("[retry_queue] attempt failed (%s); attempts so far=%s", type(exc).__name__, item.attempts)
-        if is_langsmith_exception(exc):
+        # The live path never runs this check on an LLM error either
+        if not isinstance(exc, LLMError) and is_langsmith_exception(exc):
             # Same switch run_once uses on the live path; a quiet chat would never trip it there
+            logger.warning("[retry_queue] LangSmith tracing error detected; disabling tracing")
             os.environ[LANGSMITH_RUNTIME_FLAG] = "false"
         queue.mark_failed(item)
         return
@@ -670,26 +672,30 @@ def _attempt_retry(queue: retry_queue.RetryQueue, item: retry_queue.QueueItem, c
     _track(analytics.track_retry, item.chat_id, "delivered_late", attempts=item.attempts, waited_s=waited_s)
 
 
-def _apologise_for_expired(queue: retry_queue.RetryQueue) -> None:
-    """Tell recruiters their question expired. A send that may work later keeps the item for the next cycle."""
-    max_age = config.RETRY_QUEUE_MAX_AGE_SECONDS
+def _apologise_for_expired(queue: retry_queue.RetryQueue) -> bool:
+    """Tell recruiters their question expired. Returns False if Telegram looks down.
+
+    A send that may work later keeps the item for the next cycle, up to the grace period.
+    """
+    give_up_at = config.RETRY_QUEUE_MAX_AGE_SECONDS + EXPIRED_APOLOGY_GRACE_SECONDS
     for item in queue.expired():
         waited_s = queue.age_seconds(item)
-        if waited_s >= max_age + EXPIRED_APOLOGY_GRACE_SECONDS:
+        heartbeat.touch()
+        if _send_telegram(item.chat_id, EXPIRED_REPLY, item.message_id) == "retry":
+            if waited_s < give_up_at:
+                return False  # don't spend this cycle on the rest
             logger.warning("[retry_queue] apology not sent within the grace period (chat_id=%s)", item.chat_id)
-        else:
-            heartbeat.touch()
-            if _send_telegram(item.chat_id, EXPIRED_REPLY, item.message_id) == "retry":
-                return  # Telegram is failing: don't spend this cycle on the rest
         queue.remove(item)
         _track(analytics.track_retry, item.chat_id, "expired", attempts=item.attempts, waited_s=waited_s)
+    return True
 
 
 def process_retry_queue(conversations: dict) -> None:
     """Expire old questions, then make at most one attempt. Never raises Exception."""
     try:
         queue = retry_queue.get_queue()
-        _apologise_for_expired(queue)
+        if not _apologise_for_expired(queue):
+            return
         item = queue.next_due()
         if item is not None:
             _attempt_retry(queue, item, conversations)
