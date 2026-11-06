@@ -342,6 +342,78 @@ def test_expired_item_gets_apology_once(flow, retries):
     assert not flow.path.exists()
 
 
+def _expired_item(flow):
+    flow.queue.add(CHAT, MSG, "q")
+    flow.clock.now += 86400
+
+
+def test_apology_is_kept_when_sending_may_work_later(flow, retries):
+    _expired_item(flow)
+    flow.send_status = "retry"
+
+    graph.process_retry_queue({})
+
+    assert len(flow.queue) == 1
+    assert retries == []
+    assert flow.llm_calls == 0
+
+    flow.send_status = "sent"
+    graph.process_retry_queue({})
+
+    assert [s[1] for s in flow.sends] == [graph.EXPIRED_REPLY, graph.EXPIRED_REPLY]
+    assert len(flow.queue) == 0
+    assert retries[0][1] == "expired"
+
+
+def test_apology_stops_after_the_first_failed_send(flow, retries):
+    flow.queue.add(CHAT, MSG, "a")
+    flow.queue.add(2, 20, "b")
+    flow.clock.now += 86400
+    flow.send_status = "retry"
+
+    graph.process_retry_queue({})
+
+    assert len(flow.sends) == 1
+    assert len(flow.queue) == 2
+
+
+def test_apology_gives_up_after_the_grace_period(flow, retries, caplog):
+    _expired_item(flow)
+    flow.send_status = "retry"
+    graph.process_retry_queue({})
+    flow.clock.now += graph.EXPIRED_APOLOGY_GRACE_SECONDS
+
+    with caplog.at_level(logging.WARNING):
+        graph.process_retry_queue({})
+
+    assert len(flow.sends) == 1
+    assert len(flow.queue) == 0
+    assert retries[0][1] == "expired"
+    assert "apology not sent" in caplog.text
+
+
+def test_blocked_chat_expiry_is_removed(flow, retries):
+    _expired_item(flow)
+    flow.send_status = "gone"
+
+    graph.process_retry_queue({})
+
+    assert len(flow.queue) == 0
+    assert retries[0][1] == "expired"
+
+
+def test_each_apology_touches_the_heartbeat(flow, retries, monkeypatch):
+    touches = []
+    monkeypatch.setattr(graph.heartbeat, "touch", lambda: touches.append(1))
+    flow.queue.add(CHAT, MSG, "a")
+    flow.queue.add(2, 20, "b")
+    flow.clock.now += 86400
+
+    graph.process_retry_queue({})
+
+    assert len(touches) == 2
+
+
 def test_restart_resumes(flow, retries):
     _due(flow, "My question")
     flow.queue = flow.new_queue()

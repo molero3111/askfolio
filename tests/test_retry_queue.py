@@ -152,26 +152,51 @@ def test_emptied_queue_removes_the_file_and_next_add_waits_again(path, clock):
     assert q.next_due() is None
 
 
-def test_pop_expired_at_exactly_max_age(path, clock):
+def test_expired_at_exactly_max_age_stays_until_removed(path, clock):
     q = _queue(path, clock)
     q.add(1, 10, "old")
     clock.now += 100
     q.add(2, 20, "young")
     clock.now += 86300
 
-    expired = q.pop_expired()
+    expired = q.expired()
 
     assert [i.question for i in expired] == ["old"]
+    assert len(q) == 2
+    q.remove(expired[0])
     assert len(q) == 1
     assert len(_queue(path, clock)) == 1
 
 
-def test_pop_expired_last_item_removes_the_file(path, clock):
+def test_removing_the_last_item_removes_the_file(path, clock):
     q = _queue(path, clock)
     q.add(1, 10, "old")
     clock.now += 86400
-    q.pop_expired()
+    q.remove(q.expired()[0])
     assert not path.exists()
+
+
+def test_removing_does_not_move_the_next_attempt(path, clock):
+    q = _queue(path, clock, interval=100, max_age=1000)
+    q.add(1, 10, "old")
+    clock.now += 500
+    q.add(2, 20, "young")
+    clock.now += 500
+    q.mark_failed(q.next_due())
+
+    q.remove(q.expired()[0])
+
+    clock.now += 99
+    assert q.next_due() is None
+    clock.now += 1
+    assert q.next_due().question == "young"
+
+
+def test_expired_item_is_not_due_for_another_attempt(path, clock):
+    q = _queue(path, clock)
+    q.add(1, 10, "old")
+    clock.now += 86400
+    assert q.next_due() is None
 
 
 def test_failed_removal_write_is_logged_and_kept_in_memory(path, clock, monkeypatch, caplog):

@@ -170,20 +170,25 @@ class RetryQueue:
             self._next_attempt_at = 0.0
         self._save()
 
-    def pop_expired(self) -> list[QueueItem]:
-        """Remove and return the items that reached the maximum age."""
+    def expired(self) -> list[QueueItem]:
+        """The items that reached the maximum age; they stay queued until removed."""
         cutoff = self._clock() - self._max_age
-        expired = [item for item in self._items if item.created_at <= cutoff]
-        if expired:
-            self._items = [item for item in self._items if item.created_at > cutoff]
-            self._save()
-        return expired
+        return [item for item in self._items if item.created_at <= cutoff]
+
+    def remove(self, item: QueueItem) -> None:
+        """Drop an item without changing when the next attempt runs."""
+        self._items = [other for other in self._items if other.id != item.id]
+        if not self._items:
+            self._next_attempt_at = 0.0
+        self._save()
 
     def next_due(self) -> QueueItem | None:
         """The item to try now: fewest attempts, then oldest, so one bad question can't block the rest."""
-        if not self._items or self._clock() < self._next_attempt_at:
+        now = self._clock()
+        if now < self._next_attempt_at:
             return None
-        return min(self._items, key=lambda item: (item.attempts, item.created_at))
+        live = [item for item in self._items if item.created_at > now - self._max_age]
+        return min(live, key=lambda item: (item.attempts, item.created_at), default=None)
 
     def age_seconds(self, item: QueueItem) -> int:
         return int(self._clock() - item.created_at)

@@ -8,7 +8,7 @@ from typing import TypedDict
 import requests
 from langgraph.graph import END, START, StateGraph
 
-from app import analytics, contact_guard, heartbeat, retry_queue
+from app import analytics, config, contact_guard, heartbeat, retry_queue
 from app.calendar_client import (
     create_meeting,
     format_slot_label,
@@ -626,6 +626,10 @@ def _process_first(pending: list, conversations: dict) -> dict:
     return {"pending_messages": pending[1:], "conversations": conversations}
 
 
+# How long past expiry to keep trying to send the apology while Telegram is failing
+EXPIRED_APOLOGY_GRACE_SECONDS = 3600
+
+
 def _attempt_retry(queue: retry_queue.RetryQueue, item: retry_queue.QueueItem, conversations: dict) -> None:
     """One try at a queued question: deliver the late answer or leave it for the next attempt."""
     key = str(item.chat_id)
@@ -660,19 +664,26 @@ def _attempt_retry(queue: retry_queue.RetryQueue, item: retry_queue.QueueItem, c
     _track(analytics.track_retry, item.chat_id, "delivered_late", attempts=item.attempts, waited_s=waited_s)
 
 
+def _apologise_for_expired(queue: retry_queue.RetryQueue) -> None:
+    """Tell recruiters their question expired. A send that may work later keeps the item for the next cycle."""
+    max_age = config.RETRY_QUEUE_MAX_AGE_SECONDS
+    for item in queue.expired():
+        waited_s = queue.age_seconds(item)
+        if waited_s >= max_age + EXPIRED_APOLOGY_GRACE_SECONDS:
+            logger.warning("[retry_queue] apology not sent within the grace period (chat_id=%s)", item.chat_id)
+        else:
+            heartbeat.touch()
+            if _send_telegram(item.chat_id, EXPIRED_REPLY, item.message_id) == "retry":
+                return  # Telegram is failing: don't spend this cycle on the rest
+        queue.remove(item)
+        _track(analytics.track_retry, item.chat_id, "expired", attempts=item.attempts, waited_s=waited_s)
+
+
 def process_retry_queue(conversations: dict) -> None:
     """Expire old questions, then make at most one attempt. Never raises Exception."""
     try:
         queue = retry_queue.get_queue()
-        for item in queue.pop_expired():
-            _send_telegram(item.chat_id, EXPIRED_REPLY, item.message_id)
-            _track(
-                analytics.track_retry,
-                item.chat_id,
-                "expired",
-                attempts=item.attempts,
-                waited_s=queue.age_seconds(item),
-            )
+        _apologise_for_expired(queue)
         item = queue.next_due()
         if item is not None:
             _attempt_retry(queue, item, conversations)
