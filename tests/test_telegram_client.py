@@ -45,3 +45,16 @@ def test_send_allows_a_missing_reply_target(monkeypatch):
     calls = _post_returning(monkeypatch, 200)
     send_message(1, "hi", reply_to_message_id=5)
     assert calls[0]["reply_parameters"] == {"message_id": 5, "allow_sending_without_reply": True}
+
+
+def test_long_text_is_cut_under_the_limit(monkeypatch):
+    calls = _post_returning(monkeypatch, 200)
+    send_message(1, "x" * 5000)
+    assert len(calls[0]["text"]) == telegram_client.MAX_TEXT_CHARS
+    assert telegram_client.MAX_TEXT_CHARS < 4096
+
+
+def test_short_text_is_unchanged(monkeypatch):
+    calls = _post_returning(monkeypatch, 200)
+    send_message(1, "hi")
+    assert calls[0]["text"] == "hi"

@@ -8,6 +8,9 @@ from app.config import GET_UPDATES_TIMEOUT, TELEGRAM_BOT_TOKEN
 BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 logger = logging.getLogger(__name__)
 
+# Under Telegram's 4096, which counts an emoji as more than one character
+MAX_TEXT_CHARS = 4000
+
 
 class TelegramError(RuntimeError):
     """Telegram API failure. The message never contains the request URL.
@@ -56,7 +59,7 @@ def send_message(
     chat_id: int, text: str, *, reply_to_message_id: int | None = None
 ) -> None:
     url = f"{BASE}/sendMessage"
-    payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+    payload: dict[str, Any] = {"chat_id": chat_id, "text": text[:MAX_TEXT_CHARS]}
     if reply_to_message_id is not None:
         payload["reply_parameters"] = {
             "message_id": reply_to_message_id,
