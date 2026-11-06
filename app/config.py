@@ -102,6 +102,10 @@ LANGSMITH_TRACING = _env_bool("LANGSMITH_TRACING", True)
 LANGSMITH_PROJECT = _env("LANGSMITH_PROJECT", "askfolio-dev")
 LANGSMITH_ENDPOINT = _env("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
 LANGSMITH_ENABLED = bool(LANGSMITH_API_KEY and LANGSMITH_TRACING)
+if not LANGSMITH_ENABLED:
+    # langsmith reads these itself, so a .env with tracing on and no key would still try to send
+    os.environ["LANGSMITH_TRACING"] = "false"
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
 LANGSMITH_RUNTIME_FLAG = "ASKFOLIO_LANGSMITH_ENABLED"
 
 

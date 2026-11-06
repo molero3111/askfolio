@@ -23,7 +23,8 @@ def get_updates(offset: int | None = None) -> list[dict[str, Any]]:
         # Keep read timeout above long-poll timeout to reduce false client timeouts.
         r = requests.get(url, params=params, timeout=(10, GET_UPDATES_TIMEOUT + 30))
     except requests.exceptions.ReadTimeout as exc:
-        # Normal for a long poll with no new updates.
+        # The client waits past the long-poll timeout, so this means a stalled connection.
+        # The offset didn't move, so nothing is lost.
         logger.warning("[telegram_client] getUpdates read timeout (%s)", type(exc).__name__)
         return []
     except requests.RequestException as exc:

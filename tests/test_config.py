@@ -1,4 +1,5 @@
 import importlib
+import os
 from pathlib import Path
 
 import pytest
@@ -50,3 +51,27 @@ def test_skip_dotenv_flag_is_exposed(monkeypatch, reload_config):
     monkeypatch.delenv("ASKFOLIO_SKIP_DOTENV")
     assert reload_config().SKIP_DOTENV is False
     assert calls == [(config.PROJECT_ROOT / ".env",)]
+
+
+def test_blank_langsmith_key_turns_tracing_off(monkeypatch, reload_config):
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+
+    reload_config()
+
+    assert os.environ["LANGSMITH_TRACING"] == "false"
+    assert os.environ["LANGCHAIN_TRACING_V2"] == "false"
+
+
+def test_langsmith_key_leaves_tracing_env_alone(monkeypatch, reload_config):
+    monkeypatch.setenv("LANGSMITH_API_KEY", "fake-key")
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+
+    reload_config()
+
+    assert os.environ["LANGSMITH_TRACING"] == "true"
+    assert os.environ["LANGCHAIN_TRACING_V2"] == "true"
+    # The fixture's teardown reload must not keep the fake key in config
+    monkeypatch.delenv("LANGSMITH_API_KEY")
