@@ -1,7 +1,9 @@
+import json
 import logging
 
 import pytest
 
+import main
 from app import contact_guard, graph
 from app.contact_guard import ContactGuard, get_guard
 from app.llm_client import LLMUnavailable
@@ -165,3 +167,45 @@ def test_get_guard_warns_once_and_returns_none(tmp_path, monkeypatch, caplog, co
 
     warnings = [r for r in caplog.records if r.getMessage().startswith("[contact_guard]")]
     assert len(warnings) == 1
+
+
+@pytest.mark.parametrize("prefix", ["-", ".", "+", "%", "_"])
+def test_email_right_after_a_symbol_is_caught(prefix):
+    guard = ContactGuard.from_cv(CV)
+    assert guard.leaks(f"Write to {prefix}{EMAIL} today.") == ["owner email"]
+
+
+@pytest.mark.parametrize("phone", ["123", "12 34 56", "n/a"])
+def test_too_short_a_phone_counts_as_absent(phone):
+    guard = ContactGuard.from_cv({"personal_info": {"email": EMAIL, "phone": phone}})
+    assert guard.phone_digits is None
+    assert guard.leaks("He shipped 3 projects in 2012 and 123456 lines.") == []
+
+
+@pytest.mark.parametrize(
+    "info,missing",
+    [({"email": EMAIL}, "owner phone"), ({"phone": PHONE}, "owner email")],
+)
+def test_get_guard_warns_about_a_missing_half(tmp_path, monkeypatch, caplog, info, missing):
+    path = tmp_path / "cv.json"
+    path.write_text(json.dumps({"personal_info": info}))
+    _use_file(monkeypatch, path)
+
+    with caplog.at_level(logging.WARNING):
+        assert get_guard() is not None
+
+    assert f"[contact_guard] {missing} not in the knowledge JSON" in caplog.text
+    assert "jane.doe" not in caplog.text
+    assert "555" not in caplog.text
+
+
+def test_startup_loads_the_guard_and_reports_a_problem(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(main, "TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setattr(main, "LLM_MODEL", "a/b")
+    monkeypatch.setattr(main, "get_vectorstore", lambda: None)
+    _use_file(monkeypatch, tmp_path / "missing.json")
+
+    with caplog.at_level(logging.ERROR):
+        main.startup()
+
+    assert "[contact_guard] knowledge JSON unusable" in caplog.text

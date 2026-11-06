@@ -14,6 +14,7 @@ from ingest.scrub import contact_values, normalize, owner_email_pattern, scrub_t
 logger = logging.getLogger(__name__)
 
 _PHONE_TAIL = 9  # digits compared, so a missing country code still counts as a leak
+_PHONE_MIN = 7  # fewer digits would match ordinary numbers in a reply
 WITHHELD = "[reply withheld: contact leak]"
 
 
@@ -29,7 +30,8 @@ class ContactGuard:
             if "@" in value:
                 email = value.strip()
             else:
-                phone = re.sub(r"\D", "", value) or None
+                digits = re.sub(r"\D", "", value)
+                phone = digits if len(digits) >= _PHONE_MIN else None
         return cls(email=email, phone_digits=phone)
 
     def leaks(self, reply: str) -> list[str]:
@@ -59,9 +61,13 @@ def get_guard() -> ContactGuard | None:
         cv = json.loads(path.read_text(encoding="utf-8"))
         guard = ContactGuard.from_cv(cv)
     except (OSError, ValueError, AttributeError) as exc:
-        logger.warning("[contact_guard] knowledge JSON unusable (%s); replies go unchecked", type(exc).__name__)
+        logger.error("[contact_guard] knowledge JSON unusable (%s); replies go unchecked", type(exc).__name__)
         return None
     if not (guard.email or guard.phone_digits):
-        logger.warning("[contact_guard] no owner email or phone in the knowledge JSON; replies go unchecked")
+        logger.error("[contact_guard] no owner email or phone in the knowledge JSON; replies go unchecked")
         return None
+    if not guard.email:
+        logger.warning("[contact_guard] owner email not in the knowledge JSON; only the phone is checked")
+    if not guard.phone_digits:
+        logger.warning("[contact_guard] owner phone not in the knowledge JSON; only the email is checked")
     return guard
