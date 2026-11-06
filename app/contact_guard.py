@@ -7,15 +7,36 @@ import logging
 import re
 from dataclasses import dataclass
 from functools import cache
+from unicodedata import digit
 
 from app import config
-from ingest.scrub import contact_values, normalize, owner_email_pattern, scrub_text
+from ingest.scrub import contact_values, normalize, scrub_text
 
 logger = logging.getLogger(__name__)
 
 _PHONE_TAIL = 9  # digits compared, so a missing country code still counts as a leak
 _PHONE_MIN = 7  # fewer digits would match ordinary numbers in a reply
 WITHHELD = "[reply withheld: contact leak]"
+_PLUS_TAG = re.compile(r"(?<=\w)\+[^\s@]*(?=\s*@)")
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"[\W_]+", "", text.casefold())
+
+
+def _digits(text: str) -> str:
+    return "".join(str(digit(c)) for c in text if c.isdigit())
+
+
+def _compact_email_pattern(email: str) -> re.Pattern[str] | None:
+    """Match the email in compacted text, so any separator or spacing a reply uses still counts."""
+    local, _, domain = normalize(email).strip().partition("@")
+    local_parts = [_compact(part) for part in local.split(".")]
+    labels = [_compact(label) for label in domain.split(".")]
+    if not all(local_parts) or not all(labels):
+        return None
+    optional_dot = "(?:dot|punto)?"
+    return re.compile(optional_dot.join(local_parts) + "(?:at|arroba)?" + optional_dot.join(labels))
 
 
 @dataclass(frozen=True)
@@ -28,9 +49,9 @@ class ContactGuard:
         email = phone = None
         for value in contact_values(cv):
             if "@" in value:
-                email = value.strip()
+                email = value.strip() if _compact_email_pattern(value) else None
             else:
-                digits = re.sub(r"\D", "", value)
+                digits = _digits(value)
                 phone = digits if len(digits) >= _PHONE_MIN else None
         return cls(email=email, phone_digits=phone)
 
@@ -38,11 +59,11 @@ class ContactGuard:
         """Labels of the owner's contact values found in the reply; never the values."""
         found = []
         text = normalize(reply)
-        pattern = owner_email_pattern(self.email) if self.email else None
-        if pattern is not None and pattern.search(text):
+        pattern = _compact_email_pattern(self.email) if self.email else None
+        if pattern is not None and pattern.search(_compact(_PLUS_TAG.sub("", text))):
             found.append("owner email")
         # last 9 digits, so a dropped country code still counts; a shorter phone in full
-        if self.phone_digits and self.phone_digits[-_PHONE_TAIL:] in re.sub(r"\D", "", text):
+        if self.phone_digits and self.phone_digits[-_PHONE_TAIL:] in _digits(text):
             found.append("owner phone")
         return found
 

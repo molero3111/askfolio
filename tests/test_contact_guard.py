@@ -46,6 +46,17 @@ def _ask() -> list[dict]:
         "Call 1-555-010-1234.",
         "Call 555 010 1234.",
         "Call (555) 010/1234.",
+        "Call ٥٥٥٠١٠١٢٣٤.",
+        r"Write to jane\.doe@example\.com today.",
+        r"Write to jane.doe\@example.com today.",
+        "Write to jane.doe [ at ] example.com today.",
+        "Write to jane.doe {at} example.com today.",
+        "Write to jane.doe<at>example<dot>com today.",
+        "Write to jane.doe -at- example -dot- com today.",
+        "Write to jane.doe [arroba] example [punto] com today.",
+        "Write to jane doe at example dot com today.",
+        "**Email**jane.doe@example.com",
+        "Write to jane.doe+x@example.com today.",
     ],
 )
 def test_leaking_reply_is_withheld(flow, reply):
@@ -67,6 +78,18 @@ def test_clean_reply_is_sent_unchanged(flow):
 
     assert sent == ["He has 6 years of Python experience."]
     assert history[-1]["content"] == "He has 6 years of Python experience."
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "See github.com/jane.doe and example.com for details.",
+        "Jane Doe built example.com in 2024.",
+        "jane.doe is his handle at example.org.",
+    ],
+)
+def test_handle_and_domain_apart_are_not_a_leak(reply):
+    assert ContactGuard.from_cv(CV).leaks(reply) == []
 
 
 def test_without_a_guard_the_reply_is_sent_unchanged(flow, monkeypatch):
@@ -197,6 +220,19 @@ def test_get_guard_warns_about_a_missing_half(tmp_path, monkeypatch, caplog, inf
     assert f"[contact_guard] {missing} not in the knowledge JSON" in caplog.text
     assert "jane.doe" not in caplog.text
     assert "555" not in caplog.text
+
+
+def test_get_guard_treats_a_malformed_email_as_missing(tmp_path, monkeypatch, caplog):
+    path = tmp_path / "cv.json"
+    path.write_text(json.dumps({"personal_info": {"email": "jane.doe@", "phone": PHONE}}))
+    _use_file(monkeypatch, path)
+
+    with caplog.at_level(logging.WARNING):
+        guard = get_guard()
+
+    assert guard is not None
+    assert guard.email is None
+    assert "[contact_guard] owner email not in the knowledge JSON" in caplog.text
 
 
 def test_startup_loads_the_guard_and_reports_a_problem(tmp_path, monkeypatch, caplog):
