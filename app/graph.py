@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import time
 from collections.abc import Callable, Sequence
@@ -20,6 +21,7 @@ from app.config import (
     BOOKING_ENABLED,
     CALENDAR_DISPLAY_TIMEZONE,
     LANGSMITH_PROJECT,
+    LANGSMITH_RUNTIME_FLAG,
     LLM_MODEL,
     RATE_LIMIT_GLOBAL_PER_DAY,
     RATE_LIMIT_PER_CHAT_PER_DAY,
@@ -157,7 +159,7 @@ UNAVAILABLE_REPLY = (
 ERROR_REPLY = "Sorry, there was an error. I couldn't process that."
 CONTACT_WITHHELD_REPLY = "Sorry, I can't share that. Ask me about Emmanuel's experience, skills or projects."
 QUEUED_REPLY = (
-    "I can't answer right now. I've kept your question and will reply here within 24 hours, "
+    "I can't answer right now. I've kept your question and will try to reply here within 24 hours, "
     "so there's no need to ask again."
 )
 LATE_REPLY_PREFIX = "Sorry for the delay.\n\n"
@@ -523,6 +525,13 @@ def _withhold_contact_leak(reply: str) -> str:
     return CONTACT_WITHHELD_REPLY
 
 
+def _promise_or_unavailable(chat_id: int, message_id: int, question: str) -> tuple[str, str]:
+    """The (reply, outcome) for a question the LLM couldn't answer for now."""
+    if _keep_for_retry(chat_id, message_id, question):
+        return QUEUED_REPLY, "queued"
+    return UNAVAILABLE_REPLY, "llm_unavailable"
+
+
 def _keep_for_retry(chat_id: int, message_id: int, question: str) -> bool:
     """True when the question will be retried, so a late answer can be promised."""
     result = retry_queue.get_queue().add(chat_id, message_id, question)
@@ -585,17 +594,11 @@ def _process_first(pending: list, conversations: dict) -> dict:
                 latency_ms = int((time.monotonic() - started) * 1000)
             else:
                 logger.warning("[process_message] LLM reply empty after stripping reasoning")
-                reply = ERROR_REPLY
-                outcome = "error"
+                reply, outcome = _promise_or_unavailable(chat_id, reply_to_message_id, user_input)
             logger.info("[process_message] LLM reply length=%s chars", len(reply))
         except LLMTemporary as e:
             logger.error("[process_message] LLM temporarily unavailable: %s", e)
-            if _keep_for_retry(chat_id, reply_to_message_id, user_input):
-                reply = QUEUED_REPLY
-                outcome = "queued"
-            else:
-                reply = UNAVAILABLE_REPLY
-                outcome = "llm_unavailable"
+            reply, outcome = _promise_or_unavailable(chat_id, reply_to_message_id, user_input)
         except (LLMCreditExhausted, LLMUnavailable) as e:
             reply = UNAVAILABLE_REPLY
             outcome = "llm_unavailable"
@@ -641,6 +644,9 @@ def _attempt_retry(queue: retry_queue.RetryQueue, item: retry_queue.QueueItem, c
     except Exception as exc:
         # Type only: the message could carry the question
         logger.warning("[retry_queue] attempt failed (%s); attempts so far=%s", type(exc).__name__, item.attempts)
+        if is_langsmith_exception(exc):
+            # Same switch run_once uses on the live path; a quiet chat would never trip it there
+            os.environ[LANGSMITH_RUNTIME_FLAG] = "false"
         queue.mark_failed(item)
         return
     if not reply:

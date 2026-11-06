@@ -541,3 +541,46 @@ def test_failed_resend_keeps_the_queued_one(flow):
     _ask("My question")
 
     assert len(flow.queue) == 1
+
+
+def test_reasoning_only_reply_is_queued_with_notice(flow):
+    flow.llm = lambda _m: "<think>only reasoning</think>"
+
+    conversations = _ask()
+
+    assert flow.sends == [(CHAT, graph.QUEUED_REPLY, MSG)]
+    assert len(flow.queue) == 1
+    assert flow.tracks[0][0] == "queued"
+    assert _history(conversations) == []
+
+
+def test_reasoning_only_reply_with_full_queue_gets_plain_unavailable(flow):
+    flow.queue = flow.new_queue(max_items=0)
+    flow.llm = lambda _m: "<think>only reasoning</think>"
+
+    _ask()
+
+    assert flow.sends == [(CHAT, graph.UNAVAILABLE_REPLY, MSG)]
+    assert flow.tracks[0][0] == "llm_unavailable"
+
+
+def test_langsmith_failure_in_a_retry_turns_tracing_off(flow, retries, monkeypatch):
+    monkeypatch.setenv(graph.LANGSMITH_RUNTIME_FLAG, "true")
+    monkeypatch.setattr(graph, "is_langsmith_exception", lambda exc: True)
+    flow.llm = _raises(RuntimeError("tracing backend down"))
+    _due(flow)
+
+    graph.process_retry_queue({})
+
+    assert graph.os.environ[graph.LANGSMITH_RUNTIME_FLAG] == "false"
+    assert len(flow.queue) == 1
+
+
+def test_other_failure_in_a_retry_leaves_tracing_on(flow, retries, monkeypatch):
+    monkeypatch.setenv(graph.LANGSMITH_RUNTIME_FLAG, "true")
+    flow.llm = _raises(RuntimeError("database down"))
+    _due(flow)
+
+    graph.process_retry_queue({})
+
+    assert graph.os.environ[graph.LANGSMITH_RUNTIME_FLAG] == "true"
