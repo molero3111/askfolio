@@ -10,7 +10,14 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramError(RuntimeError):
-    """Telegram API failure. The message never contains the request URL."""
+    """Telegram API failure. The message never contains the request URL.
+
+    temporary is False when sending again can't help, such as a chat that blocked the bot.
+    """
+
+    def __init__(self, message: str, *, temporary: bool = True) -> None:
+        super().__init__(message)
+        self.temporary = temporary
 
 
 def get_updates(offset: int | None = None) -> list[dict[str, Any]]:
@@ -51,10 +58,17 @@ def send_message(
     url = f"{BASE}/sendMessage"
     payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
     if reply_to_message_id is not None:
-        payload["reply_parameters"] = {"message_id": reply_to_message_id}
+        payload["reply_parameters"] = {
+            "message_id": reply_to_message_id,
+            # A late answer must still arrive if the recruiter deleted their message.
+            "allow_sending_without_reply": True,
+        }
     try:
         r = requests.post(url, json=payload, timeout=10)
     except requests.RequestException as exc:
         raise TelegramError(f"sendMessage failed: {type(exc).__name__}") from None
     if r.status_code >= 400:
-        raise TelegramError(f"sendMessage failed: HTTP {r.status_code}")
+        raise TelegramError(
+            f"sendMessage failed: HTTP {r.status_code}",
+            temporary=r.status_code == 429 or r.status_code >= 500,
+        )

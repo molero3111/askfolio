@@ -346,3 +346,28 @@ def test_sigterm_terminates_process_with_status_zero():
     assert p.stdout.readline().strip() == "ready"
     p.terminate()
     assert p.wait(timeout=10) == 0
+
+
+def _send_raising(monkeypatch, exc):
+    def boom(*a, **k):
+        raise exc
+
+    monkeypatch.setattr(graph, "send_message", boom)
+
+
+def test_send_telegram_reports_sent(monkeypatch):
+    monkeypatch.setattr(graph, "send_message", lambda *a, **k: None)
+    assert graph._send_telegram(1, "hi", 2) == "sent"
+
+
+@pytest.mark.parametrize(
+    ("exc", "status"),
+    [
+        (telegram_client.TelegramError("sendMessage failed: HTTP 500"), "retry"),
+        (telegram_client.TelegramError("sendMessage failed: HTTP 403", temporary=False), "gone"),
+        (requests.ConnectionError("down"), "retry"),
+    ],
+)
+def test_send_telegram_reports_failures_without_raising(monkeypatch, exc, status):
+    _send_raising(monkeypatch, exc)
+    assert graph._send_telegram(1, "hi", 2) == status

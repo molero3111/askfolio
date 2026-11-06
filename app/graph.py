@@ -28,7 +28,14 @@ from app.config import (
     is_langsmith_enabled,
 )
 from app.conversation import ConversationState, SchedulingMode
-from app.llm_client import LLMCreditExhausted, LLMError, LLMResult, LLMUnavailable, chat  # noqa: F401
+from app.llm_client import (  # noqa: F401
+    LLMCreditExhausted,
+    LLMError,
+    LLMResult,
+    LLMTemporary,
+    LLMUnavailable,
+    chat,
+)
 from app.llm_messages import build_qa_messages, build_timezone_messages
 from app.observability import is_langsmith_exception, traceable, tracing_context
 from app.offset import save_offset
@@ -184,11 +191,14 @@ def answer_question(
 
 
 @traceable(name="telegram_send_message", run_type="tool")
-def _send_telegram(chat_id: int, reply: str, reply_to_message_id: int) -> None:
+def _send_telegram(chat_id: int, reply: str, reply_to_message_id: int) -> str:
+    """Send a reply and never raise. Returns "sent", "retry" (may work later) or "gone"."""
     try:
         send_message(chat_id, to_plain_text(reply), reply_to_message_id=reply_to_message_id)
     except (requests.RequestException, TelegramError) as exc:
         logger.warning("[telegram] sendMessage failed (chat_id=%s): %s", chat_id, exc)
+        return "retry" if getattr(exc, "temporary", True) else "gone"
+    return "sent"
 
 
 _IANA_KEY_RE = re.compile(r"[A-Za-z]+(?:[_/][A-Za-z_]+)+")
