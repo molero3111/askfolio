@@ -8,7 +8,7 @@ from typing import TypedDict
 import requests
 from langgraph.graph import END, START, StateGraph
 
-from app import analytics, contact_guard, heartbeat
+from app import analytics, contact_guard, heartbeat, retry_queue
 from app.calendar_client import (
     create_meeting,
     format_slot_label,
@@ -156,6 +156,15 @@ UNAVAILABLE_REPLY = (
 )
 ERROR_REPLY = "Sorry, there was an error. I couldn't process that."
 CONTACT_WITHHELD_REPLY = "Sorry, I can't share that. Ask me about Emmanuel's experience, skills or projects."
+QUEUED_REPLY = (
+    "I can't answer right now. I've kept your question and will reply here within 24 hours, "
+    "so there's no need to ask again."
+)
+LATE_REPLY_PREFIX = "Sorry for the delay.\n\n"
+EXPIRED_REPLY = (
+    "Sorry, I couldn't answer your earlier question in time. "
+    "Please ask again, or reach out via the links on the portfolio."
+)
 
 
 @traceable(name="retrieve_context", run_type="retriever")
@@ -514,6 +523,15 @@ def _withhold_contact_leak(reply: str) -> str:
     return CONTACT_WITHHELD_REPLY
 
 
+def _keep_for_retry(chat_id: int, message_id: int, question: str) -> bool:
+    """True when the question will be retried, so a late answer can be promised."""
+    result = retry_queue.get_queue().add(chat_id, message_id, question)
+    if result in (retry_queue.AddResult.ADDED, retry_queue.AddResult.DUPLICATE):
+        return True
+    logger.warning("[retry_queue] question not kept (%s)", result.value)
+    return False
+
+
 def _process_first(pending: list, conversations: dict) -> dict:
     chat_id, reply_to_message_id, user_input = pending[0]
     remaining = len(pending) - 1
@@ -570,6 +588,14 @@ def _process_first(pending: list, conversations: dict) -> dict:
                 reply = ERROR_REPLY
                 outcome = "error"
             logger.info("[process_message] LLM reply length=%s chars", len(reply))
+        except LLMTemporary as e:
+            logger.error("[process_message] LLM temporarily unavailable: %s", e)
+            if _keep_for_retry(chat_id, reply_to_message_id, user_input):
+                reply = QUEUED_REPLY
+                outcome = "queued"
+            else:
+                reply = UNAVAILABLE_REPLY
+                outcome = "llm_unavailable"
         except (LLMCreditExhausted, LLMUnavailable) as e:
             reply = UNAVAILABLE_REPLY
             outcome = "llm_unavailable"
@@ -580,10 +606,17 @@ def _process_first(pending: list, conversations: dict) -> dict:
             reply = ERROR_REPLY
             outcome = "error"
             logger.exception("[process_message] LLM request failed: %s", e)
-        _send_telegram(chat_id, reply, reply_to_message_id)
+        status = _send_telegram(chat_id, reply, reply_to_message_id)
+        if outcome == "answered" and status in ("retry", "gone"):
+            # The recruiter never got this answer: regenerate it later if sending may work again
+            kept = status == "retry" and _keep_for_retry(chat_id, reply_to_message_id, user_input)
+            outcome = "queued" if kept else "undeliverable"
+            latency_ms = None
 
-    conv.add_message("user", user_input)
-    conv.add_message("assistant", reply)
+    # A queued question joins the history when its late answer is delivered
+    if outcome not in ("queued", "undeliverable"):
+        conv.add_message("user", user_input)
+        conv.add_message("assistant", reply)
     conversations[key] = conv.to_dict()
     # Last step: a failure above is tracked once, as an error, by process_message_node
     _track(analytics.track_question, chat_id, user_input, outcome, latency_ms=latency_ms)
