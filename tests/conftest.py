@@ -23,3 +23,15 @@ def _no_real_knowledge_json(tmp_path, monkeypatch):
     get_guard.cache_clear()
     yield
     get_guard.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_retry_queue(tmp_path, monkeypatch):
+    """Keep every test off a real queue file."""
+    from app import config
+    from app.retry_queue import get_queue
+
+    monkeypatch.setattr(config, "RETRY_QUEUE_FILE", str(tmp_path / "retry_queue.json"))
+    get_queue.cache_clear()
+    yield
+    get_queue.cache_clear()

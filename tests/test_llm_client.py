@@ -4,7 +4,13 @@ import pytest
 import requests
 
 from app import config, llm_client
-from app.llm_client import LLMCreditExhausted, LLMError, LLMUnavailable, chat
+from app.llm_client import (
+    LLMCreditExhausted,
+    LLMError,
+    LLMTemporary,
+    LLMUnavailable,
+    chat,
+)
 
 OR_URL = "https://openrouter.ai/api/v1/chat/completions"
 LOCAL_URL = "http://localhost:11434/v1/chat/completions"
@@ -307,3 +313,50 @@ def test_empty_reply_after_reasoning_tokens_warns(caplog):
         "[llm] reply empty after 800 reasoning tokens; "
         "raise LLM_MAX_TOKENS or pick a non-reasoning model"
     ) in caplog.text
+
+
+@pytest.mark.parametrize(
+    "responses",
+    [
+        [requests.Timeout("slow")],
+        [requests.ConnectionError("down")],
+        [FakeResponse(429), FakeResponse(429)],
+        [FakeResponse(500), FakeResponse(500)],
+        [FakeResponse(200, None)],
+        [FakeResponse(200, {"error": {"message": "upstream"}})],
+        [FakeResponse(200, {"choices": []})],
+        [FakeResponse(200, {"choices": [{"message": {}}]})],
+        [_with_choice(finish_reason="error")],
+        [_with_choice(error={"code": 502, "message": "upstream"})],
+        [ok(content="  ")],
+    ],
+    ids=[
+        "timeout", "connection", "429", "500", "non-json", "error-body", "no-choices",
+        "malformed", "finish-error", "choice-error", "empty",
+    ],
+)
+def test_temporary_failures_raise_llm_temporary(responses):
+    with pytest.raises(LLMTemporary):
+        chat(MSGS, session=FakeSession(responses), sleep=no_sleep)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        FakeResponse(400, {"error": {"message": "bad request"}}),
+        FakeResponse(401, {"error": {"message": "no auth"}}),
+        FakeResponse(404, {"error": {"message": "No endpoints found for this model"}}),
+        FakeResponse(400, {"error": {"message": "violates your data policy"}}),
+    ],
+    ids=["400", "401", "404-no-endpoints", "400-policy"],
+)
+def test_permanent_failures_are_not_temporary(response):
+    with pytest.raises(LLMUnavailable) as raised:
+        chat(MSGS, session=FakeSession([response]), sleep=no_sleep)
+    assert not isinstance(raised.value, LLMTemporary)
+
+
+def test_credit_exhausted_is_not_temporary():
+    with pytest.raises(LLMCreditExhausted) as raised:
+        chat(MSGS, session=FakeSession([FakeResponse(402, {})]), sleep=no_sleep)
+    assert not isinstance(raised.value, LLMTemporary)

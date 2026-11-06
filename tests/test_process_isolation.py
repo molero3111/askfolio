@@ -38,12 +38,12 @@ def test_crash_in_one_message_does_not_drop_the_batch(monkeypatch):
     assert "1" in state["conversations"] and "3" in state["conversations"]
 
 
-def test_reasoning_only_reply_becomes_error_reply(monkeypatch):
+def test_reasoning_only_reply_is_kept_for_retry(monkeypatch):
     sent = _setup(monkeypatch)
     monkeypatch.setattr(graph, "_call_llm", lambda _m: "<think>only thoughts</think>")
     state = {"offset": None, "pending_messages": [(1, 10, "hello")], "conversations": {}}
     out = graph.process_message_node(state)
-    assert sent == [(1, graph.ERROR_REPLY)]
+    assert sent == [(1, graph.QUEUED_REPLY)]
     assert "No reply could be extracted" not in str(out["conversations"])
 
 

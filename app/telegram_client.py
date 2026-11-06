@@ -8,9 +8,19 @@ from app.config import GET_UPDATES_TIMEOUT, TELEGRAM_BOT_TOKEN
 BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 logger = logging.getLogger(__name__)
 
+# Under Telegram's 4096, which counts an emoji as more than one character
+MAX_TEXT_CHARS = 4000
+
 
 class TelegramError(RuntimeError):
-    """Telegram API failure. The message never contains the request URL."""
+    """Telegram API failure. The message never contains the request URL.
+
+    temporary is False when sending again can't help, such as a chat that blocked the bot.
+    """
+
+    def __init__(self, message: str, *, temporary: bool = True) -> None:
+        super().__init__(message)
+        self.temporary = temporary
 
 
 def get_updates(offset: int | None = None) -> list[dict[str, Any]]:
@@ -23,7 +33,8 @@ def get_updates(offset: int | None = None) -> list[dict[str, Any]]:
         # Keep read timeout above long-poll timeout to reduce false client timeouts.
         r = requests.get(url, params=params, timeout=(10, GET_UPDATES_TIMEOUT + 30))
     except requests.exceptions.ReadTimeout as exc:
-        # Normal for a long poll with no new updates.
+        # The client waits past the long-poll timeout, so this means a stalled connection.
+        # The offset didn't move, so nothing is lost.
         logger.warning("[telegram_client] getUpdates read timeout (%s)", type(exc).__name__)
         return []
     except requests.RequestException as exc:
@@ -48,12 +59,19 @@ def send_message(
     chat_id: int, text: str, *, reply_to_message_id: int | None = None
 ) -> None:
     url = f"{BASE}/sendMessage"
-    payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+    payload: dict[str, Any] = {"chat_id": chat_id, "text": text[:MAX_TEXT_CHARS]}
     if reply_to_message_id is not None:
-        payload["reply_parameters"] = {"message_id": reply_to_message_id}
+        payload["reply_parameters"] = {
+            "message_id": reply_to_message_id,
+            # A late answer must still arrive if the recruiter deleted their message.
+            "allow_sending_without_reply": True,
+        }
     try:
         r = requests.post(url, json=payload, timeout=10)
     except requests.RequestException as exc:
         raise TelegramError(f"sendMessage failed: {type(exc).__name__}") from None
     if r.status_code >= 400:
-        raise TelegramError(f"sendMessage failed: HTTP {r.status_code}")
+        raise TelegramError(
+            f"sendMessage failed: HTTP {r.status_code}",
+            temporary=r.status_code == 429 or r.status_code >= 500,
+        )

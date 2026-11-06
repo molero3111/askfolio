@@ -102,6 +102,10 @@ LANGSMITH_TRACING = _env_bool("LANGSMITH_TRACING", True)
 LANGSMITH_PROJECT = _env("LANGSMITH_PROJECT", "askfolio-dev")
 LANGSMITH_ENDPOINT = _env("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
 LANGSMITH_ENABLED = bool(LANGSMITH_API_KEY and LANGSMITH_TRACING)
+if not LANGSMITH_ENABLED:
+    # langsmith reads these itself, so a .env with tracing on and no key would still try to send
+    os.environ["LANGSMITH_TRACING"] = "false"
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
 LANGSMITH_RUNTIME_FLAG = "ASKFOLIO_LANGSMITH_ENABLED"
 
 
@@ -151,5 +155,15 @@ RATE_LIMIT_PER_CHAT_PER_DAY = int(_env("RATE_LIMIT_PER_CHAT_PER_DAY", "50"))
 RATE_LIMIT_GLOBAL_PER_DAY = int(_env("RATE_LIMIT_GLOBAL_PER_DAY", "45"))
 RATE_LIMIT_BOOKINGS_PER_CHAT_PER_DAY = int(_env("RATE_LIMIT_BOOKINGS_PER_CHAT_PER_DAY", "1"))
 RATE_LIMIT_BOOKINGS_GLOBAL_PER_DAY = int(_env("RATE_LIMIT_BOOKINGS_GLOBAL_PER_DAY", "5"))
+
+# Questions kept for a late answer after a temporary failure; deleted once answered or expired
+RETRY_QUEUE_FILE = _env("RETRY_QUEUE_FILE", "data/retry_queue.json")
+# Wait after a failed attempt (and before the first one); one attempt at a time across the queue
+RETRY_QUEUE_INTERVAL_SECONDS = int(_env("RETRY_QUEUE_INTERVAL_SECONDS", "1800"))
+# Wait after a delivered answer, so a backlog drains once the LLM is back
+RETRY_QUEUE_AFTER_SUCCESS_SECONDS = int(_env("RETRY_QUEUE_AFTER_SUCCESS_SECONDS", "60"))
+RETRY_QUEUE_MAX_AGE_SECONDS = int(_env("RETRY_QUEUE_MAX_AGE_SECONDS", "86400"))
+RETRY_QUEUE_MAX_ITEMS = int(_env("RETRY_QUEUE_MAX_ITEMS", "20"))
+RETRY_QUEUE_MAX_PER_CHAT = int(_env("RETRY_QUEUE_MAX_PER_CHAT", "3"))
 # Master switch for meeting booking (the MVP .env.example ships it disabled)
 BOOKING_ENABLED = _env_bool("BOOKING_ENABLED", False)
