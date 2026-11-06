@@ -11,3 +11,15 @@ import pytest
 def _isolated_heartbeat(tmp_path, monkeypatch):
     """Keep every test off the real /tmp/heartbeat."""
     monkeypatch.setenv("HEARTBEAT_FILE", str(tmp_path / "heartbeat"))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_knowledge_json(tmp_path, monkeypatch):
+    """Keep the reply guard off the developer's real knowledge JSON."""
+    from app import config
+    from app.contact_guard import get_guard
+
+    monkeypatch.setattr(config, "INGEST_KNOWLEDGE_JSON", str(tmp_path / "no-cv.json"))
+    get_guard.cache_clear()
+    yield
+    get_guard.cache_clear()

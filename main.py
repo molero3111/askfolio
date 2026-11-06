@@ -18,6 +18,7 @@ from app.config import (
     POSTHOG_KEY,
     TELEGRAM_BOT_TOKEN,
 )
+from app.contact_guard import get_guard
 from app.graph import build_graph
 from app.log_redact import install_excepthook, install_redaction
 from app.observability import is_langsmith_exception
@@ -67,6 +68,7 @@ def startup() -> None:
     if not LLM_MODEL:
         raise SystemExit("Set LLM_MODEL in .env (e.g. an OpenRouter model ID)")
     get_vectorstore()
+    get_guard()  # reports a missing or empty knowledge JSON at startup, not on the first question
     heartbeat.touch()
 
 
