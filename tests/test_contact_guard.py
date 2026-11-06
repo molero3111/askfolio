@@ -57,6 +57,8 @@ def _ask() -> list[dict]:
         "Write to jane doe at example dot com today.",
         "**Email**jane.doe@example.com",
         "Write to jane.doe+x@example.com today.",
+        "Write to jane.doe+x at example dot com today.",
+        "Write to x+jane.doe@example.com today.",
     ],
 )
 def test_leaking_reply_is_withheld(flow, reply):
@@ -88,6 +90,11 @@ def test_clean_reply_is_sent_unchanged(flow):
         "jane.doe is his handle at example.org.",
     ],
 )
+def test_owner_address_with_a_plus_tag_is_caught():
+    guard = ContactGuard.from_cv({"personal_info": {"email": "jane.doe+work@example.com"}})
+    assert guard.leaks("Write to jane.doe+work@example.com today.") == ["owner email"]
+
+
 def test_handle_and_domain_apart_are_not_a_leak(reply):
     assert ContactGuard.from_cv(CV).leaks(reply) == []
 

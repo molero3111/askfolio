@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _PHONE_TAIL = 9  # digits compared, so a missing country code still counts as a leak
 _PHONE_MIN = 7  # fewer digits would match ordinary numbers in a reply
 WITHHELD = "[reply withheld: contact leak]"
-_PLUS_TAG = re.compile(r"(?<=\w)\+[^\s@]*(?=\s*@)")
+_PLUS_TAG = re.compile(r"(?<=\w)\+[^\s@]*(?=\W*(?:@|at\b|arroba\b))", re.IGNORECASE)
 
 
 def _compact(text: str) -> str:
@@ -60,7 +60,10 @@ class ContactGuard:
         found = []
         text = normalize(reply)
         pattern = _compact_email_pattern(self.email) if self.email else None
-        if pattern is not None and pattern.search(_compact(_PLUS_TAG.sub("", text))):
+        # Both forms: a reply may add a plus tag, and the owner's own address may hold one.
+        if pattern is not None and (
+            pattern.search(_compact(text)) or pattern.search(_compact(_PLUS_TAG.sub("", text)))
+        ):
             found.append("owner email")
         # last 9 digits, so a dropped country code still counts; a shorter phone in full
         if self.phone_digits and self.phone_digits[-_PHONE_TAIL:] in _digits(text):
