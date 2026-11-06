@@ -90,13 +90,13 @@ def test_clean_reply_is_sent_unchanged(flow):
         "jane.doe is his handle at example.org.",
     ],
 )
+def test_handle_and_domain_apart_are_not_a_leak(reply):
+    assert ContactGuard.from_cv(CV).leaks(reply) == []
+
+
 def test_owner_address_with_a_plus_tag_is_caught():
     guard = ContactGuard.from_cv({"personal_info": {"email": "jane.doe+work@example.com"}})
     assert guard.leaks("Write to jane.doe+work@example.com today.") == ["owner email"]
-
-
-def test_handle_and_domain_apart_are_not_a_leak(reply):
-    assert ContactGuard.from_cv(CV).leaks(reply) == []
 
 
 def test_without_a_guard_the_reply_is_sent_unchanged(flow, monkeypatch):
