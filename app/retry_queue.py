@@ -100,7 +100,23 @@ class RetryQueue:
     def __len__(self) -> int:
         return len(self._items)
 
+    def _remove_unusable_data(self) -> None:
+        """An unreadable copy of questions must not outlive the queue's own limit."""
+        try:
+            self._path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("[retry_queue] could not remove the unusable file (%s)", type(exc).__name__)
+
+    def _remove_leftover_temp_files(self) -> None:
+        """A kill during a save can leave its temp file, which also holds question text."""
+        try:
+            for leftover in self._path.parent.glob(f".{self._path.name}.*"):
+                leftover.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("[retry_queue] could not remove leftover files (%s)", type(exc).__name__)
+
     def _load(self) -> None:
+        self._remove_leftover_temp_files()
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
             raw_items = data["items"]
@@ -108,9 +124,14 @@ class RetryQueue:
                 raise TypeError("items is not a list")
         except FileNotFoundError:
             return
+        except OSError as exc:
+            # May be temporary, so the file stays
+            logger.warning("[retry_queue] queue file unreadable (%s); starting empty", type(exc).__name__)
+            return
         except Exception as exc:
             # Whatever is in this file, it must not stop the bot from starting
-            logger.warning("[retry_queue] queue file unusable (%s); starting empty", type(exc).__name__)
+            logger.warning("[retry_queue] queue file unusable (%s); removing it", type(exc).__name__)
+            self._remove_unusable_data()
             return
         self._next_attempt_at = _next_attempt_from(data.get("next_attempt_at"))
         skipped = 0
@@ -121,6 +142,8 @@ class RetryQueue:
                 skipped += 1
         if skipped:
             logger.warning("[retry_queue] skipped %s invalid items in the queue file", skipped)
+            if not self._items:
+                self._remove_unusable_data()
 
     def _save(self) -> bool:
         try:

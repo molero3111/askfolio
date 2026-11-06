@@ -307,3 +307,36 @@ def test_item_with_impossible_created_at_is_skipped(path, clock, value):
     path.write_text(f'{{"version": 1, "next_attempt_at": 0, "items": [{good}, {bad}]}}')
 
     assert len(_queue(path, clock)) == 1
+
+
+@pytest.mark.parametrize("content", ["{not json", "[]", '{"items": "nope"}', '{"items": [{"id": "only-bad"}]}'])
+def test_unusable_file_is_removed(path, clock, content):
+    path.write_text(content)
+    assert len(_queue(path, clock)) == 0
+    assert not path.exists()
+
+
+def test_unreadable_file_is_kept(path, clock, monkeypatch):
+    path.write_text(json.dumps({"version": 1, "next_attempt_at": 0, "items": [_valid_item()]}))
+    real = type(path).read_text
+
+    def denied(self, *a, **k):
+        if self == path:
+            raise PermissionError("denied")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(type(path), "read_text", denied)
+    assert len(_queue(path, clock)) == 0
+    assert path.exists()
+
+
+def test_leftover_temp_files_are_removed_at_load(path, clock):
+    leftover = path.parent / f".{path.name}.abc123"
+    leftover.write_text("question text")
+    other = path.parent / ".other.abc123"
+    other.write_text("keep")
+
+    _queue(path, clock)
+
+    assert not leftover.exists()
+    assert other.exists()
