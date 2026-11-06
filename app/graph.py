@@ -8,7 +8,7 @@ from typing import TypedDict
 import requests
 from langgraph.graph import END, START, StateGraph
 
-from app import analytics, heartbeat
+from app import analytics, contact_guard, heartbeat
 from app.calendar_client import (
     create_meeting,
     format_slot_label,
@@ -148,6 +148,7 @@ UNAVAILABLE_REPLY = (
     "Sorry, I'm temporarily unavailable. Please try again later."
 )
 ERROR_REPLY = "Sorry, there was an error. I couldn't process that."
+CONTACT_WITHHELD_REPLY = "Sorry, I can't share that. Ask me about Emmanuel's experience, skills or projects."
 
 
 @traceable(name="retrieve_context", run_type="retriever")
@@ -494,6 +495,15 @@ def process_message_node(state: AgentState) -> dict:
         return {"pending_messages": pending[1:], "conversations": conversations}
 
 
+def _withhold_contact_leak(reply: str) -> str:
+    guard = contact_guard.get_guard()
+    leaks = guard.leaks(reply) if guard else []
+    if not leaks:
+        return reply
+    logger.warning("[contact_guard] reply withheld (%s)", ", ".join(leaks))
+    return CONTACT_WITHHELD_REPLY
+
+
 def _process_first(pending: list, conversations: dict) -> dict:
     chat_id, reply_to_message_id, user_input = pending[0]
     remaining = len(pending) - 1
@@ -542,6 +552,7 @@ def _process_first(pending: list, conversations: dict) -> dict:
             started = time.monotonic()
             reply = answer_question(user_input, conv.history)
             if reply:
+                reply = _withhold_contact_leak(reply)
                 outcome = "answered"
                 latency_ms = int((time.monotonic() - started) * 1000)
             else:

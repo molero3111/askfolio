@@ -23,14 +23,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app import config, graph, llm_messages
+from app.contact_guard import ContactGuard
 from app.conversation import ConversationState
 from app.llm_client import LLMResult, chat
 from app.log_redact import RedactionFilter
-from ingest.scrub import contact_values, normalize, owner_email_pattern, scrub_text
+from ingest.scrub import normalize
 
 _ROLES = {"user", "assistant"}
-_PHONE_TAIL = 9  # digits compared, so a missing country code still counts as a leak
-WITHHELD = "[reply withheld: contact leak]"
 # Function words that tell the reply's language apart; only these languages are checked.
 _STOPWORDS = {
     "en": frozenset(["the", "and", "of", "is", "he", "his", "has", "with", "at", "to", "for", "in", "was", "who", "from"]),
@@ -125,40 +124,6 @@ def load_golden(path: Path) -> list[Case]:
 
 def _fold(text: str) -> str:
     return normalize(text).casefold()
-
-
-@dataclass(frozen=True)
-class ContactGuard:
-    email: str | None
-    phone_digits: str | None
-
-    @classmethod
-    def from_cv(cls, cv: dict) -> ContactGuard:
-        email = phone = None
-        for value in contact_values(cv):
-            if "@" in value:
-                email = value.strip()
-            else:
-                phone = re.sub(r"\D", "", value) or None
-        return cls(email=email, phone_digits=phone)
-
-    def leaks(self, reply: str) -> list[str]:
-        """Labels of the owner's contact values found in the reply; never the values."""
-        found = []
-        text = normalize(reply)
-        pattern = owner_email_pattern(self.email) if self.email else None
-        if pattern is not None and pattern.search(text):
-            found.append("owner email")
-        # last 9 digits, so a dropped country code still counts; a shorter phone in full
-        if self.phone_digits and self.phone_digits[-_PHONE_TAIL:] in re.sub(r"\D", "", text):
-            found.append("owner phone")
-        return found
-
-    def redact(self, reply: str) -> str:
-        exact = [v for v in (self.email, self.phone_digits) if v]
-        redacted = scrub_text(reply, exact=exact)[0]
-        # The scrubber misses some separators the digit check catches; never show those.
-        return WITHHELD if self.leaks(redacted) else redacted
 
 
 @dataclass(frozen=True)
