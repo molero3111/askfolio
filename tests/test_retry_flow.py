@@ -421,3 +421,51 @@ def test_worker_lets_shutdown_through(flow, retries):
 
     assert len(flow.queue) == 1
     assert flow.path.exists()
+
+
+# Asking again
+
+
+def test_asking_again_after_recovery_answers_once(flow, retries):
+    flow.llm = _raises(LLMTemporary("down"))
+    conversations = _ask("My question")
+    flow.llm = lambda _m: "An answer."
+
+    conversations = _ask("my question ", conversations)
+    flow.clock.now += 1800
+    graph.process_retry_queue(conversations)
+
+    assert [s[1] for s in flow.sends] == [graph.QUEUED_REPLY, "An answer."]
+    assert len(flow.queue) == 0
+    assert not flow.path.exists()
+    assert retries == []
+    assert [m["content"] for m in _history(conversations)] == ["my question ", "An answer."]
+
+
+def test_answering_another_question_keeps_the_queued_one(flow):
+    flow.llm = _raises(LLMTemporary("down"))
+    _ask("First question")
+    flow.llm = lambda _m: "An answer."
+
+    _ask("Second question")
+
+    assert len(flow.queue) == 1
+
+
+def test_same_question_from_another_chat_keeps_the_queued_one(flow):
+    flow.queue.add(2, 20, "My question")
+
+    _ask("My question")
+
+    assert len(flow.queue) == 1
+
+
+def test_failed_resend_keeps_the_queued_one(flow):
+    flow.llm = _raises(LLMTemporary("down"))
+    _ask("My question")
+    flow.llm = lambda _m: "An answer."
+    flow.send_status = "retry"
+
+    _ask("My question")
+
+    assert len(flow.queue) == 1

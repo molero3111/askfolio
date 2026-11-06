@@ -5,6 +5,7 @@ Not thread-safe; the bot processes messages on a single thread.
 """
 import json
 import logging
+import math
 import time
 import uuid
 from collections.abc import Callable
@@ -59,9 +60,18 @@ def _item_from_dict(raw: dict) -> QueueItem:
         and isinstance(item.created_at, int | float)
         and isinstance(item.attempts, int)
     )
-    if not valid:
-        raise TypeError("bad field type")
+    if not valid or not math.isfinite(item.created_at):
+        raise TypeError("bad field value")
     return item
+
+
+def _next_attempt_from(raw: object) -> float:
+    """A bad stored time means retry on the next cycle; it must not cost the queued questions."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    return value if math.isfinite(value) else 0.0
 
 
 class RetryQueue:
@@ -96,17 +106,18 @@ class RetryQueue:
             raw_items = data["items"]
             if not isinstance(raw_items, list):
                 raise TypeError("items is not a list")
-            self._next_attempt_at = float(data.get("next_attempt_at", 0))
         except FileNotFoundError:
             return
-        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        except Exception as exc:
+            # Whatever is in this file, it must not stop the bot from starting
             logger.warning("[retry_queue] queue file unusable (%s); starting empty", type(exc).__name__)
             return
+        self._next_attempt_at = _next_attempt_from(data.get("next_attempt_at"))
         skipped = 0
         for raw in raw_items:
             try:
                 self._items.append(_item_from_dict(raw))
-            except (KeyError, TypeError):
+            except (KeyError, TypeError, OverflowError):
                 skipped += 1
         if skipped:
             logger.warning("[retry_queue] skipped %s invalid items in the queue file", skipped)
@@ -144,6 +155,20 @@ class RetryQueue:
         self._items.pop()
         self._next_attempt_at = previous_next
         return AddResult.FAILED
+
+    def discard(self, chat_id: int, question: str) -> None:
+        """Drop a queued question that has since been answered live."""
+        kept = [
+            item
+            for item in self._items
+            if not (item.chat_id == chat_id and _same_question(item.question, question))
+        ]
+        if len(kept) == len(self._items):
+            return
+        self._items = kept
+        if not self._items:
+            self._next_attempt_at = 0.0
+        self._save()
 
     def pop_expired(self) -> list[QueueItem]:
         """Remove and return the items that reached the maximum age."""

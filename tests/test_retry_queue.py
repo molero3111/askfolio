@@ -224,3 +224,61 @@ def test_get_queue_uses_config_and_reports_resumed_items(caplog):
 
     assert "[retry_queue] resumed 1" in caplog.text
     assert MARKER not in caplog.text
+
+
+def test_discard_removes_only_the_same_question_in_that_chat(path, clock):
+    q = _queue(path, clock)
+    q.add(1, 10, "Hello")
+    q.add(1, 11, "Other")
+    q.add(2, 20, "Hello")
+
+    q.discard(1, " hello ")
+
+    assert len(q) == 2
+    assert len(_queue(path, clock)) == 2
+
+
+def test_discard_of_last_item_removes_the_file(path, clock):
+    q = _queue(path, clock)
+    q.add(1, 10, "Hello")
+    q.discard(1, "hello")
+    assert not path.exists()
+
+
+def test_discard_of_nothing_writes_nothing(path, clock):
+    q = _queue(path, clock)
+    q.discard(1, "hello")
+    assert not path.exists()
+
+
+def _valid_item(**overrides):
+    return {"id": "a", "chat_id": 1, "message_id": 10, "question": "fine", "created_at": 1000.0, "attempts": 0, **overrides}
+
+
+def test_restart_keeps_the_wait(path, clock):
+    _queue(path, clock).add(1, 10, "q")
+    assert _queue(path, clock).next_due() is None
+
+
+@pytest.mark.parametrize("value", ['"x"', "null", "[]", "1" + "0" * 400, "Infinity", "NaN"])
+def test_bad_next_attempt_keeps_the_items(path, clock, value):
+    path.write_text(f'{{"version": 1, "next_attempt_at": {value}, "items": [{json.dumps(_valid_item())}]}}')
+
+    q = _queue(path, clock)
+
+    assert len(q) == 1
+    assert q.next_due().question == "fine"
+
+
+def test_deeply_nested_file_starts_empty(path, clock):
+    path.write_text("[" * 200_000)
+    assert len(_queue(path, clock)) == 0
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "1" + "0" * 400])
+def test_item_with_impossible_created_at_is_skipped(path, clock, value):
+    good = json.dumps(_valid_item())
+    bad = json.dumps(_valid_item(id="b")).replace("1000.0", value)
+    path.write_text(f'{{"version": 1, "next_attempt_at": 0, "items": [{good}, {bad}]}}')
+
+    assert len(_queue(path, clock)) == 1

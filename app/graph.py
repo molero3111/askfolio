@@ -612,6 +612,9 @@ def _process_first(pending: list, conversations: dict) -> dict:
             kept = status == "retry" and _keep_for_retry(chat_id, reply_to_message_id, user_input)
             outcome = "queued" if kept else "undeliverable"
             latency_ms = None
+        elif outcome == "answered":
+            # They asked again and got it: a queued copy would answer the same question twice
+            retry_queue.get_queue().discard(chat_id, user_input)
 
     # A queued question joins the history when its late answer is delivered
     if outcome not in ("queued", "undeliverable"):
