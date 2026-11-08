@@ -184,6 +184,32 @@ def test_get_guard_reads_the_knowledge_json(tmp_path, monkeypatch):
     assert guard.leaks(f"Write to {EMAIL}") == ["owner email"]
 
 
+def test_get_guard_logs_labels_at_startup(tmp_path, monkeypatch, caplog):
+    path = tmp_path / "cv.json"
+    path.write_text(json.dumps(CV))
+    _use_file(monkeypatch, path)
+
+    with caplog.at_level(logging.INFO):
+        get_guard()
+
+    assert "[contact_guard] checking owner email, owner phone" in caplog.text
+    assert EMAIL not in caplog.text
+    assert "010" not in caplog.text
+
+
+def test_get_guard_log_names_only_the_loaded_value(tmp_path, monkeypatch, caplog):
+    path = tmp_path / "cv.json"
+    path.write_text(json.dumps({"personal_info": {"email": EMAIL}}))
+    _use_file(monkeypatch, path)
+
+    with caplog.at_level(logging.INFO):
+        get_guard()
+
+    assert "[contact_guard] checking owner email\n" in caplog.text + "\n"
+    assert "checking owner phone" not in caplog.text
+    assert "checking owner email, owner phone" not in caplog.text
+
+
 @pytest.mark.parametrize("content", [None, "{not json", "[]", '{"personal_info": {}}'])
 def test_get_guard_warns_once_and_returns_none(tmp_path, monkeypatch, caplog, content):
     path = tmp_path / "cv.json"

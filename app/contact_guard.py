@@ -94,4 +94,6 @@ def get_guard() -> ContactGuard | None:
         logger.warning("[contact_guard] owner email not in the knowledge JSON; only the phone is checked")
     if not guard.phone_digits:
         logger.warning("[contact_guard] owner phone not in the knowledge JSON; only the email is checked")
+    labels = [label for label, value in (("owner email", guard.email), ("owner phone", guard.phone_digits)) if value]
+    logger.info("[contact_guard] checking %s", ", ".join(labels))
     return guard

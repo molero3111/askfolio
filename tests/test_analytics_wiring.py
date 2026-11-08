@@ -60,12 +60,12 @@ def test_unavailable_is_tracked(flow):
     assert track[4].get("latency_ms") is None
 
 
-def test_empty_reply_is_error(flow):
+def test_empty_reply_is_queued(flow):
     log, state = flow
     state["llm"] = lambda _m: "<think>only reasoning</think>"
     _run((7, 1, "What stack?"))
-    assert [t[3] for t in _tracks(log)] == ["error"]
-    assert ("send", 7, graph.ERROR_REPLY) in log
+    assert [t[3] for t in _tracks(log)] == ["queued"]
+    assert ("send", 7, graph.QUEUED_REPLY) in log
 
 
 def test_rate_limited_is_tracked_with_scope(flow, monkeypatch):

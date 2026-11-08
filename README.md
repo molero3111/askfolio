@@ -14,6 +14,7 @@ A Telegram bot that answers recruiter-style questions using **RAG** over **pgvec
   - Recruiter can cancel at any point with words like "cancel", "never mind", "no thanks".
 - **LLM**: [OpenRouter](https://openrouter.ai/) by default, with optional fallback models; any other OpenAI-compatible endpoint works too.
 - **Rate limits**: per-chat and global message caps, plus booking caps (see [Rate limits](#rate-limits)).
+- **Retry queue**: a question that hits a temporary LLM or send failure is kept and answered late in the same chat, for up to 24 hours (see [Retry queue](#retry-queue)).
 
 ## CV data (`resources/json/cv.json`)
 
@@ -234,13 +235,30 @@ In-memory limits (reset on restart; day windows are UTC calendar days). A messag
 | `RATE_LIMIT_BOOKINGS_PER_CHAT_PER_DAY` | Meetings one chat can book per UTC day (default 1) |
 | `RATE_LIMIT_BOOKINGS_GLOBAL_PER_DAY` | Meetings booked across all chats per UTC day (default 5) |
 
+## Retry queue
+
+When every model fails with a temporary error (timeout, network, 429, 5xx, or an unusable answer), the recruiter is told their question was kept and that the bot will try to reply within 24 hours, and the bot retries it. The answer arrives as a reply to the original message and goes through the same reply check. A question whose answer couldn't be sent is kept the same way, without a notice, and the answer is generated again later. After 24 hours the question is dropped with one short apology, which keeps being tried for an hour if Telegram is failing. If the bot is down, nothing runs until it's back, and then the apology goes out first. A delivered live answer to the same question removes the queued copy.
+
+Permanent failures (402, other 4xx, no provider matching the policy) aren't kept and get the usual "temporarily unavailable" reply. The same goes for scheduling messages and messages refused by the rate limits. When a cap is reached or the file can't be written, the bot gives that reply too, so it never promises an answer it can't deliver.
+
+Questions are stored as plain text in `RETRY_QUEUE_FILE`, readable only by the bot's user. The file is deleted when the queue is empty or holds nothing usable. Retries run one at a time after a poll cycle, so they don't use extra threads, and a slow retry delays the next poll the way a slow answer does. Late answers use the chat's current history, which is empty after a restart. A crash, a send timeout or a failed write to the file at the wrong moment can repeat one answer. Retries aren't counted by `RATE_LIMIT_GLOBAL_PER_DAY`: expect up to about 100 extra upstream requests a day during an outage (about 50 attempts, each retried once on a 429 or 5xx), so leave room for them under your provider's cap.
+
+| Var | Purpose |
+|-----|---------|
+| `RETRY_QUEUE_FILE` | Where queued questions are kept (default `data/retry_queue.json`) |
+| `RETRY_QUEUE_INTERVAL_SECONDS` | Wait before the first attempt and after a failed one, across the whole queue (default 1800) |
+| `RETRY_QUEUE_AFTER_SUCCESS_SECONDS` | Wait after a delivered answer, so a backlog drains (default 60) |
+| `RETRY_QUEUE_MAX_AGE_SECONDS` | Age at which a question is dropped (default 86400). The notice to the recruiter says 24 hours whatever this is set to |
+| `RETRY_QUEUE_MAX_ITEMS` | Most questions queued in total (default 20) |
+| `RETRY_QUEUE_MAX_PER_CHAT` | Most questions queued per chat (default 3) |
+
 ## Health and operations
 
 - **Heartbeat:** the bot touches `HEARTBEAT_FILE` (default `/tmp/heartbeat`) after startup and after each successful poll cycle.
 - **Healthcheck:** `python -m app.healthcheck` exits 0 while the heartbeat is fresh and 1 otherwise. The production compose uses it as the container healthcheck.
 - **Shutdown:** the app exits with status 0 on SIGTERM, and the compose files run it with `init: true` so the signal reaches Python.
 - **Privacy check:** `uv run python scripts/check_index_pii.py` fails (exit 1) if the owner's email or phone from the knowledge JSON is still present in the vector table. It prints only match counts, never the values.
-- **Reply check:** a Q&A reply holding the owner's email or phone from the knowledge JSON is replaced by a neutral reply before it is sent or stored. The check loads at startup and logs `[contact_guard]` if the file is unusable or lacks a value, in which case replies go out unchecked by that value. Restart the bot after changing contact values, since a re-ingest alone doesn't reload them. With LangSmith on, traces still hold the raw reply. Treat this as a last check, not the main protection: contact values should never reach the index.
+- **Reply check:** a Q&A reply holding the owner's email or phone from the knowledge JSON is replaced by a neutral reply before it is sent or stored. The check loads at startup, logs `[contact_guard] checking ...` with the values it found (labels only), and logs a warning or error if the file is unusable or lacks a value, in which case replies go out unchecked by that value. Restart the bot after changing contact values, since a re-ingest alone doesn't reload them. With LangSmith on, traces still hold the raw reply. Treat this as a last check, not the main protection: contact values should never reach the index.
 - **Production compose:** `deploy/compose.yml` is the production stack. It pulls the app image from GHCR (`IMAGE_TAG`), takes host paths from `ASKFOLIO_*` env vars (`ASKFOLIO_STATE_DIR`, `ASKFOLIO_RESOURCES_DIR`, `ASKFOLIO_DB_DIR`), and runs the app read-only with all capabilities dropped. CI and deploy live in `.github/workflows`.
 
 ## Usage analytics (optional)
@@ -258,8 +276,9 @@ Optional, off unless `POSTHOG_KEY` and `ANALYTICS_SALT` are set; sends the quest
 
 Events:
 
-- `question_asked`: `question`, `outcome` (`answered`, `rate_limited`, `llm_unavailable` or `error`), `rate_limit_scope` when rate-limited, `latency_ms` when answered.
+- `question_asked`: `question`, `outcome` (`answered`, `rate_limited`, `llm_unavailable`, `queued`, `undeliverable` or `error`), `rate_limit_scope` when rate-limited, `latency_ms` when answered.
 - `recruiter_first_seen`: the first message from a chat.
+- `question_retry_result`: what happened to a queued question: `outcome` (`delivered_late`, `expired` or `undeliverable`), `attempts`, `waited_s`. It carries no question text.
 
 Every event carries `project_source`, `environment` and `is_internal`, with no IP and no person profile. Queued events are flushed when the bot stops.
 
@@ -321,6 +340,7 @@ Full list: [Wikipedia — tz database time zones](https://en.wikipedia.org/wiki/
 │   ├── config.py              # Settings from env
 │   ├── llm_client.py          # OpenRouter-aware chat completions client
 │   ├── rate_limit.py          # In-memory message and booking limiters
+│   ├── retry_queue.py         # Questions kept for a late answer after a temporary failure
 │   ├── healthcheck.py         # Container healthcheck (reads the heartbeat)
 │   ├── graph.py               # LangGraph: get_telegram_updates → process_message
 │   ├── conversation.py        # ConversationState, SchedulingMode (state machine types)

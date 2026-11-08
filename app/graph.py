@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import time
 from collections.abc import Callable, Sequence
@@ -8,7 +9,7 @@ from typing import TypedDict
 import requests
 from langgraph.graph import END, START, StateGraph
 
-from app import analytics, contact_guard, heartbeat
+from app import analytics, config, contact_guard, heartbeat, retry_queue
 from app.calendar_client import (
     create_meeting,
     format_slot_label,
@@ -20,6 +21,7 @@ from app.config import (
     BOOKING_ENABLED,
     CALENDAR_DISPLAY_TIMEZONE,
     LANGSMITH_PROJECT,
+    LANGSMITH_RUNTIME_FLAG,
     LLM_MODEL,
     RATE_LIMIT_GLOBAL_PER_DAY,
     RATE_LIMIT_PER_CHAT_PER_DAY,
@@ -28,7 +30,14 @@ from app.config import (
     is_langsmith_enabled,
 )
 from app.conversation import ConversationState, SchedulingMode
-from app.llm_client import LLMCreditExhausted, LLMError, LLMResult, LLMUnavailable, chat  # noqa: F401
+from app.llm_client import (  # noqa: F401
+    LLMCreditExhausted,
+    LLMError,
+    LLMResult,
+    LLMTemporary,
+    LLMUnavailable,
+    chat,
+)
 from app.llm_messages import build_qa_messages, build_timezone_messages
 from app.observability import is_langsmith_exception, traceable, tracing_context
 from app.offset import save_offset
@@ -149,6 +158,15 @@ UNAVAILABLE_REPLY = (
 )
 ERROR_REPLY = "Sorry, there was an error. I couldn't process that."
 CONTACT_WITHHELD_REPLY = "Sorry, I can't share that. Ask me about Emmanuel's experience, skills or projects."
+QUEUED_REPLY = (
+    "I can't answer right now. I've kept your question and will try to reply here within 24 hours, "
+    "so there's no need to ask again."
+)
+LATE_REPLY_PREFIX = "Sorry for the delay.\n\n"
+EXPIRED_REPLY = (
+    "Sorry, I couldn't answer your earlier question in time. "
+    "Please ask again, or reach out via the links on the portfolio."
+)
 
 
 @traceable(name="retrieve_context", run_type="retriever")
@@ -184,11 +202,14 @@ def answer_question(
 
 
 @traceable(name="telegram_send_message", run_type="tool")
-def _send_telegram(chat_id: int, reply: str, reply_to_message_id: int) -> None:
+def _send_telegram(chat_id: int, reply: str, reply_to_message_id: int) -> str:
+    """Send a reply and never raise. Returns "sent", "retry" (may work later) or "gone"."""
     try:
         send_message(chat_id, to_plain_text(reply), reply_to_message_id=reply_to_message_id)
     except (requests.RequestException, TelegramError) as exc:
         logger.warning("[telegram] sendMessage failed (chat_id=%s): %s", chat_id, exc)
+        return "retry" if getattr(exc, "temporary", True) else "gone"
+    return "sent"
 
 
 _IANA_KEY_RE = re.compile(r"[A-Za-z]+(?:[_/][A-Za-z_]+)+")
@@ -504,6 +525,22 @@ def _withhold_contact_leak(reply: str) -> str:
     return CONTACT_WITHHELD_REPLY
 
 
+def _promise_or_unavailable(chat_id: int, message_id: int, question: str) -> tuple[str, str]:
+    """The (reply, outcome) for a question the LLM couldn't answer for now."""
+    if _keep_for_retry(chat_id, message_id, question):
+        return QUEUED_REPLY, "queued"
+    return UNAVAILABLE_REPLY, "llm_unavailable"
+
+
+def _keep_for_retry(chat_id: int, message_id: int, question: str) -> bool:
+    """True when the question will be retried, so a late answer can be promised."""
+    result = retry_queue.get_queue().add(chat_id, message_id, question)
+    if result in (retry_queue.AddResult.ADDED, retry_queue.AddResult.DUPLICATE):
+        return True
+    logger.warning("[retry_queue] question not kept (%s)", result.value)
+    return False
+
+
 def _process_first(pending: list, conversations: dict) -> dict:
     chat_id, reply_to_message_id, user_input = pending[0]
     remaining = len(pending) - 1
@@ -557,9 +594,11 @@ def _process_first(pending: list, conversations: dict) -> dict:
                 latency_ms = int((time.monotonic() - started) * 1000)
             else:
                 logger.warning("[process_message] LLM reply empty after stripping reasoning")
-                reply = ERROR_REPLY
-                outcome = "error"
+                reply, outcome = _promise_or_unavailable(chat_id, reply_to_message_id, user_input)
             logger.info("[process_message] LLM reply length=%s chars", len(reply))
+        except LLMTemporary as e:
+            logger.error("[process_message] LLM temporarily unavailable: %s", e)
+            reply, outcome = _promise_or_unavailable(chat_id, reply_to_message_id, user_input)
         except (LLMCreditExhausted, LLMUnavailable) as e:
             reply = UNAVAILABLE_REPLY
             outcome = "llm_unavailable"
@@ -570,14 +609,98 @@ def _process_first(pending: list, conversations: dict) -> dict:
             reply = ERROR_REPLY
             outcome = "error"
             logger.exception("[process_message] LLM request failed: %s", e)
-        _send_telegram(chat_id, reply, reply_to_message_id)
+        status = _send_telegram(chat_id, reply, reply_to_message_id)
+        if outcome == "answered" and status in ("retry", "gone"):
+            # The recruiter never got this answer: regenerate it later if sending may work again
+            kept = status == "retry" and _keep_for_retry(chat_id, reply_to_message_id, user_input)
+            outcome = "queued" if kept else "undeliverable"
+            latency_ms = None
+        elif outcome == "answered":
+            # They asked again and got it: a queued copy would answer the same question twice
+            retry_queue.get_queue().discard(chat_id, user_input)
 
-    conv.add_message("user", user_input)
-    conv.add_message("assistant", reply)
+    # A queued question joins the history when its late answer is delivered
+    if outcome not in ("queued", "undeliverable"):
+        conv.add_message("user", user_input)
+        conv.add_message("assistant", reply)
     conversations[key] = conv.to_dict()
     # Last step: a failure above is tracked once, as an error, by process_message_node
     _track(analytics.track_question, chat_id, user_input, outcome, latency_ms=latency_ms)
     return {"pending_messages": pending[1:], "conversations": conversations}
+
+
+# How long past expiry to keep trying to send the apology while Telegram is failing
+EXPIRED_APOLOGY_GRACE_SECONDS = 3600
+
+
+def _attempt_retry(queue: retry_queue.RetryQueue, item: retry_queue.QueueItem, conversations: dict) -> None:
+    """One try at a queued question: deliver the late answer or leave it for the next attempt."""
+    key = str(item.chat_id)
+    conv = ConversationState.from_dict(conversations.get(key, {}))
+    heartbeat.touch()
+    try:
+        reply = answer_question(item.question, conv.history)
+        reply = _withhold_contact_leak(reply) if reply else ""
+    except Exception as exc:
+        # Type only: the message could carry the question
+        logger.warning("[retry_queue] attempt failed (%s); attempts so far=%s", type(exc).__name__, item.attempts)
+        # The live path never runs this check on an LLM error either
+        if not isinstance(exc, LLMError) and is_langsmith_exception(exc):
+            # Same switch run_once uses on the live path; a quiet chat would never trip it there
+            logger.warning("[retry_queue] LangSmith tracing error detected; disabling tracing")
+            os.environ[LANGSMITH_RUNTIME_FLAG] = "false"
+        queue.mark_failed(item)
+        return
+    if not reply:
+        logger.warning("[retry_queue] attempt gave an empty reply; attempts so far=%s", item.attempts)
+        queue.mark_failed(item)
+        return
+
+    status = _send_telegram(item.chat_id, LATE_REPLY_PREFIX + reply, item.message_id)
+    if status == "retry":
+        queue.mark_failed(item)
+        return
+    waited_s = queue.age_seconds(item)
+    queue.mark_done(item)
+    if status == "gone":
+        _track(analytics.track_retry, item.chat_id, "undeliverable", attempts=item.attempts, waited_s=waited_s)
+        return
+    conv.add_message("user", item.question)
+    conv.add_message("assistant", reply)
+    conversations[key] = conv.to_dict()
+    logger.info("[retry_queue] late answer delivered (chat_id=%s, waited_s=%s)", item.chat_id, waited_s)
+    _track(analytics.track_retry, item.chat_id, "delivered_late", attempts=item.attempts, waited_s=waited_s)
+
+
+def _apologise_for_expired(queue: retry_queue.RetryQueue) -> bool:
+    """Tell recruiters their question expired. Returns False if Telegram looks down.
+
+    A send that may work later keeps the item for the next cycle, up to the grace period.
+    """
+    give_up_at = config.RETRY_QUEUE_MAX_AGE_SECONDS + EXPIRED_APOLOGY_GRACE_SECONDS
+    for item in queue.expired():
+        waited_s = queue.age_seconds(item)
+        heartbeat.touch()
+        if _send_telegram(item.chat_id, EXPIRED_REPLY, item.message_id) == "retry":
+            if waited_s < give_up_at:
+                return False  # don't spend this cycle on the rest
+            logger.warning("[retry_queue] apology not sent within the grace period (chat_id=%s)", item.chat_id)
+        queue.remove(item)
+        _track(analytics.track_retry, item.chat_id, "expired", attempts=item.attempts, waited_s=waited_s)
+    return True
+
+
+def process_retry_queue(conversations: dict) -> None:
+    """Expire old questions, then make at most one attempt. Never raises Exception."""
+    try:
+        queue = retry_queue.get_queue()
+        if not _apologise_for_expired(queue):
+            return
+        item = queue.next_due()
+        if item is not None:
+            _attempt_retry(queue, item, conversations)
+    except Exception as exc:
+        logger.warning("[retry_queue] cycle failed (%s)", type(exc).__name__)
 
 
 def should_continue(state: AgentState) -> str:

@@ -23,6 +23,10 @@ class LLMUnavailable(LLMError):
     """The LLM could not produce an answer (transient or routing failure)."""
 
 
+class LLMTemporary(LLMUnavailable):
+    """A failure that may clear by itself: timeout, network, 429, 5xx or an unusable answer."""
+
+
 class LLMCreditExhausted(LLMError):
     """The provider reported the credit limit is reached (HTTP 402)."""
 
@@ -100,9 +104,9 @@ def chat(
                 url, headers=headers, json=payload, timeout=config.LLM_REQUEST_TIMEOUT
             )
         except requests.Timeout as exc:
-            raise LLMUnavailable("LLM request timed out") from exc
+            raise LLMTemporary("LLM request timed out") from exc
         except requests.RequestException as exc:
-            raise LLMUnavailable(f"LLM request failed: {type(exc).__name__}") from exc
+            raise LLMTemporary(f"LLM request failed: {type(exc).__name__}") from exc
 
         status = resp.status_code
         if status == 402:
@@ -126,7 +130,7 @@ def chat(
                 logger.warning("[llm] HTTP %s, retrying in %ss", status, delay)
                 sleep(delay)
                 continue
-            raise LLMUnavailable(f"LLM unavailable (HTTP {status})")
+            raise LLMTemporary(f"LLM unavailable (HTTP {status})")
         if status >= 400:
             raise LLMUnavailable(f"LLM request failed (HTTP {status})")
         break
@@ -134,17 +138,17 @@ def chat(
     try:
         body = resp.json()
     except Exception as exc:
-        raise LLMUnavailable("LLM returned a non-JSON response") from exc
+        raise LLMTemporary("LLM returned a non-JSON response") from exc
     if not isinstance(body, dict) or body.get("error") or not body.get("choices"):
-        raise LLMUnavailable("LLM response had no choices")
+        raise LLMTemporary("LLM response had no choices")
     try:
         choice = body["choices"][0]
         content = choice["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise LLMUnavailable("LLM response malformed") from exc
+        raise LLMTemporary("LLM response malformed") from exc
     finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
     if finish_reason == "error" or (isinstance(choice, dict) and choice.get("error")):
-        raise LLMUnavailable("LLM reported an error in the completion")
+        raise LLMTemporary("LLM reported an error in the completion")
     usage = body.get("usage") or {}
     if not isinstance(content, str) or not content.strip():
         details = usage.get("completion_tokens_details") or {}
@@ -155,7 +159,7 @@ def chat(
                 "raise LLM_MAX_TOKENS or pick a non-reasoning model",
                 reasoning,
             )
-        raise LLMUnavailable("LLM returned empty content")
+        raise LLMTemporary("LLM returned empty content")
     if finish_reason == "length":
         logger.warning("[llm] reply truncated (finish_reason=length); consider raising LLM_MAX_TOKENS")
 

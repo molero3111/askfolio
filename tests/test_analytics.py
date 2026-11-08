@@ -261,3 +261,24 @@ def test_shutdown_flush_is_time_limited(client):
 def test_enabled_requires_https_host(client, monkeypatch, host, on):
     monkeypatch.setattr(config, "POSTHOG_HOST", host)
     assert analytics.enabled() is on
+
+
+def test_track_retry_has_no_question(client):
+    analytics.track_retry(42, "delivered_late", attempts=2, waited_s=3600)
+
+    event, distinct, props = client.captures[0]
+    assert event == "question_retry_result"
+    assert distinct == analytics.distinct_id(42)
+    assert (props["outcome"], props["attempts"], props["waited_s"]) == ("delivered_late", 2, 3600)
+    assert props["project_source"] == "askfolio"
+    assert "question" not in props
+
+
+def test_track_retry_is_off_when_analytics_is_off(monkeypatch):
+    monkeypatch.setattr(config, "POSTHOG_KEY", "")
+    built = []
+    monkeypatch.setattr(analytics, "Posthog", lambda *a, **k: built.append(1))
+
+    analytics.track_retry(42, "expired", attempts=0, waited_s=1)
+
+    assert built == []
